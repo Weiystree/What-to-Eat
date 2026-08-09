@@ -131,7 +131,8 @@
             <button class="close" @click="showManualEntry = false">×</button>
           </div>
           <input class="input" v-model="manualText" placeholder="例如：一碗米饭、红烧鸡肉、炒青菜" />
-          <button class="btn-primary" style="margin-top:16px;" @click="saveManualEntry">保存</button>
+          <div v-if="estimatingManual" class="subtitle" style="margin-top: 8px;">识别中，请稍候…</div>
+          <button class="btn-primary" style="margin-top:16px;" :disabled="estimatingManual" @click="saveManualEntry">保存</button>
         </div>
       </div>
       <div v-if="capturing" class="subtitle" style="margin-top: 8px;">
@@ -155,7 +156,7 @@ import {
   getSavedLocation, requestGeolocation, appendDiary,
   getCachedNutrition, setCachedNutrition
 } from '../services/store.js'
-import { recognizeMeal, dailyNutrition } from '../services/agent.js'
+import { recognizeMeal, dailyNutrition, estimateMeal } from '../services/agent.js'
 
 const router = useRouter()
 const ctx = reactive({
@@ -171,6 +172,7 @@ const nextMeal = ref('')
 const diaryToday = ref(0)
 const reminder = ref('')
 const capturing = ref(false)
+const estimatingManual = ref(false)
 
 const nutrition = ref(null)
 const nutritionLoading = ref(false)
@@ -328,12 +330,22 @@ function saveCtx() {
 function saveNote() {
   saveCtx()
 }
-function saveManualEntry() {
+async function saveManualEntry() {
   const text = manualText.value.trim()
   if (!text) { alert('请输入吃了什么'); return }
+  estimatingManual.value = true
+  let items = [{ name: text, portion: '一份', method: '手动输入', category: 'other' }]
+  try {
+    const r = await estimateMeal({ textDescription: text, profile: getProfile() })
+    if (r && r.ok && r.data && Array.isArray(r.data.items) && r.data.items.length) {
+      items = r.data.items.map(it => ({ ...it, method: '手动输入' }))
+    }
+  } catch (e) {
+    // 网络/识别失败：保留上面的兜底 items
+  }
+  estimatingManual.value = false
   appendDiary({
-    items: [{ name: text, portion: '一份', method: '手动输入' }],
-    meal: guessMeal(), confirmed: false, awaitingFeedback: false
+    items, meal: guessMeal(), confirmed: false, awaitingFeedback: false
   })
   manualText.value = ''
   showManualEntry.value = false

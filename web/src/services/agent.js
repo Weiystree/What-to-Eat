@@ -23,9 +23,9 @@ function localMock(action, payload) {
       ok: true, source: 'local-mock',
       data: {
         items: [
-          { name: '米饭', portion: '一碗' },
-          { name: '红烧鸡肉', portion: '一份' },
-          { name: '炒青菜', portion: '一小份' }
+          { name: '米饭', portion: '一碗', category: 'staple', calories: 260 },
+          { name: '红烧鸡肉', portion: '一份', category: 'meat', calories: 320 },
+          { name: '炒青菜', portion: '一小份', category: 'veg', calories: 80 }
         ]
       }
     }
@@ -75,3 +75,5 @@ export const recommend = (payload) => invoke('recommend', payload)
 export const chat = (payload) => invoke('chat', payload)
 export const dailyNutrition = (payload) => invoke('dailyNutrition', payload)
 export const party = (payload) => invoke('party', payload)
+// 纯文字场景（手动记录/直接采纳推荐）估算 category/calories，底层复用 recognizeMeal
+export const estimateMeal = (payload) => invoke('recognizeMeal', payload)

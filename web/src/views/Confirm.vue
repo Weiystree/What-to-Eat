@@ -73,7 +73,7 @@ function guessMeal() {
 
 onMounted(() => {
   const p = getPending('recognize') || {}
-  candidates.value = (p.items || []).map(x => ({ name: x.name, portion: x.portion || '一份', method: x.method || '' }))
+  candidates.value = (p.items || []).map(x => ({ name: x.name, portion: x.portion || '一份', method: x.method || '', category: x.category, calories: x.calories }))
   imageSrc.value = p.imageSrc || ''
   meal.value = guessMeal()
   // 默认不预选，让用户主动确认
@@ -97,7 +97,9 @@ function togglePick(c) {
 function addOne() { items.value.push({ name: '', portion: '一份' }) }
 
 function collect() {
-  const valid = items.value.filter(x => (x.name || '').trim())
+  const valid = items.value
+    .filter(x => (x.name || '').trim())
+    .map(x => ({ ...x, category: x.category || 'other' }))
   if (!valid.length) { alert('至少填一项菜品'); return null }
   return {
     items: valid, imageSrc: imageSrc.value,

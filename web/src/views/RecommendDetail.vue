@@ -114,9 +114,18 @@ function guessMeal() {
   return '夜宵'
 }
 
-function onPick() {
+async function onPick() {
+  let item = { name: pick.value.dish, portion: '一份', method: '推荐执行', category: 'other' }
+  try {
+    const r = await agent.estimateMeal({ textDescription: pick.value.dish, profile: getProfile() })
+    if (r && r.ok && r.data && Array.isArray(r.data.items) && r.data.items.length) {
+      item = { ...r.data.items[0], method: '推荐执行' }
+    }
+  } catch (e) {
+    // 估算失败：保留上面的兜底 item
+  }
   appendDiary({
-    items: [{ name: pick.value.dish, portion: '一份', method: '推荐执行' }],
+    items: [item],
     pick: pick.value, meal: guessMeal(),
     confirmed: false, awaitingFeedback: true
   })

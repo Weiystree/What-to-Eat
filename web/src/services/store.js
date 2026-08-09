@@ -158,3 +158,86 @@ export function deriveAgeMode(profile) {
   if (age >= 60) return 'senior'
   return 'adult'
 }
+
+// —— 食物分类（日记页图标 + 每周种类/热量统计的单一数据源） ——
+export const FOOD_CATEGORIES = [
+  { key: 'staple',  label: '主食',   icon: '🍚' },
+  { key: 'veg',     label: '蔬菜',   icon: '🥦' },
+  { key: 'fruit',   label: '水果',   icon: '🍎' },
+  { key: 'meat',    label: '肉类',   icon: '🍗' },
+  { key: 'seafood', label: '海鲜',   icon: '🍤' },
+  { key: 'egg',     label: '蛋类',   icon: '🥚' },
+  { key: 'bean',    label: '豆制品', icon: '🫘' },
+  { key: 'dairy',   label: '奶制品', icon: '🥛' },
+  { key: 'other',   label: '其他',   icon: '🍽' }
+]
+const CATEGORY_MAP = FOOD_CATEGORIES.reduce((m, c) => { m[c.key] = c; return m }, {})
+export function getCategoryMeta(key) {
+  return CATEGORY_MAP[key] || CATEGORY_MAP.other
+}
+
+// 把 AI 识别/估算结果（category/calories）合并回本地 items，返回新数组，不改原对象
+export function mergeFoodEstimates(items, estimated) {
+  const list = Array.isArray(items) ? items : []
+  const est = Array.isArray(estimated) ? estimated : []
+  return list.map((item, idx) => {
+    const byName = est.find(e => e && e.name === item.name)
+    const match = byName || (est.length === list.length ? est[idx] : null)
+    if (!match) return { ...item, category: item.category || 'other' }
+    return {
+      ...item,
+      category: match.category || item.category || 'other',
+      calories: typeof match.calories === 'number' ? match.calories : item.calories
+    }
+  })
+}
+
+// 从一组日记条目里统计"吃了多少种食物"，按分类分组（按菜名去重）
+export function summarizeFoodKinds(entries) {
+  const seenNames = new Set()
+  const countByCategory = {}
+  ;(entries || []).forEach(d => {
+    ;(d.items || []).forEach(it => {
+      const name = (it.name || '').trim()
+      if (!name || seenNames.has(name)) return
+      seenNames.add(name)
+      const cat = it.category || 'other'
+      countByCategory[cat] = (countByCategory[cat] || 0) + 1
+    })
+  })
+  const byCategory = FOOD_CATEGORIES.map(c => ({
+    key: c.key, label: c.label, icon: c.icon, count: countByCategory[c.key] || 0
+  }))
+  return { totalKinds: seenNames.size, byCategory }
+}
+
+const WEEKLY_KIND_TARGET = 25
+
+// 最近 7 天：吃了多少种食物 + 分类分布（对应膳食指南"每周 25 种+"）
+export function getWeeklyFoodStats() {
+  const entries = getDiary().filter(d => Date.now() - (d.createdAt || 0) <= 7 * 24 * 60 * 60 * 1000)
+  const stats = summarizeFoodKinds(entries)
+  return { ...stats, target: WEEKLY_KIND_TARGET }
+}
+
+// 最近 7 天每天的日期标签 + 当天卡路里合计，供柱状图使用
+export function getWeeklyCalories() {
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const days = []
+  for (let i = 6; i >= 0; i--) {
+    const start = today.getTime() - i * 24 * 60 * 60 * 1000
+    days.push({ start, end: start + 24 * 60 * 60 * 1000, label: `${new Date(start).getMonth() + 1}/${new Date(start).getDate()}`, kcal: 0, hasUnknown: false })
+  }
+  getDiary().forEach(d => {
+    const ts = d.createdAt || 0
+    const day = days.find(x => ts >= x.start && ts < x.end)
+    if (!day) return
+    ;(d.items || []).forEach(it => {
+      if (typeof it.calories === 'number') day.kcal += it.calories
+      else day.hasUnknown = true
+    })
+  })
+  const weekTotal = days.reduce((sum, d) => sum + d.kcal, 0)
+  const maxKcal = Math.max(1, ...days.map(d => d.kcal))
+  return { days, weekTotal, maxKcal }
+}

@@ -23,24 +23,25 @@ const SYSTEM_PROMPT = `你是饮食决策助手，帮用户 1 分钟内决定下
 规则：
 1. 过敏(allergies)和忌口(taboos)硬排除；健康偏好(healthPrefs)软倾向。
 2. 单人三卡：最合适/最想吃/最省事。若 crave 非"无所谓"，三张必须贴合该方向。
-3. 餐厅场景：dish 格式"店名 · 菜品"，三张必须从 nearbyPlaces 选店。reason 提评分和距离，placeId 填回对应店的 placeId。尽量不同店。
+3. 餐厅场景：dish 格式"店名 · 菜品"，三张必须从 nearbyPlaces 选店。reason 提评分和距离，placeId 填回对应店的 placeId。尽量不同店。signatureDishes 给 2~3 个该店推荐菜品建议（可参考 nearbyPlaces 里的 dishes 提示词发挥），这是建议不是该店真实菜单，非餐厅场景可不填。
 4. budget 是单餐预算硬约束，三张必须严格在范围内。
 5. refineHint 非空时向该方向靠拢。seed 用于变化选择避免重复。
-6. 输出合法 JSON。`
+6. 输出合法 JSON。
+7. 识别/估算菜品（recognizeMeal）时，必须给每项 category（枚举：staple/veg/fruit/meat/seafood/egg/bean/dairy/other）和 calories（整数 kcal，粗略估算即可，不确定也给一个合理值而不是留空）。`
 
 const MOCK = {
   recognizeMeal: {
     items: [
-      { name: '米饭', portion: '一碗' },
-      { name: '红烧鸡肉', portion: '一份' },
-      { name: '炒青菜', portion: '一小份' }
+      { name: '米饭', portion: '一碗', category: 'staple', calories: 260 },
+      { name: '红烧鸡肉', portion: '一份', category: 'meat', calories: 320 },
+      { name: '炒青菜', portion: '一小份', category: 'veg', calories: 80 }
     ]
   },
   recommend: {
     picks: [
-      { key: 'balanced', title: '今天最合适', dish: '番茄虾仁豆腐煲 + 一拳米饭 + 一份青菜', reason: '最近两餐蛋白质多为猪肉，这一餐换成虾和豆腐更丰富。', budget: '30~45 元', time: '25 分钟', allergens: ['虾', '大豆'], swaps: ['虾仁 ↔ 鸡胸肉'], howto: '外卖搜"豆腐煲"，或在家：热油下姜蒜，番茄炒软后加水、豆腐、虾仁煮 5 分钟。' },
-      { key: 'crave', title: '今天最想吃', dish: '清汤麻辣烫（牛肉+豆腐+菌菇+粉）', reason: '照顾情绪与口味，保留辣味但少喝汤。', budget: '25~35 元', time: '15 分钟', allergens: ['大豆'], swaps: ['粉 ↔ 魔芋'], howto: '附近麻辣烫店或外卖任选，告知不要额外辣油。' },
-      { key: 'easy', title: '今天最省事', dish: '海南鸡饭 + 一份青菜', reason: '出餐快、附近好找。', budget: '22~28 元', time: '10 分钟', allergens: [], swaps: ['青菜 ↔ 西兰花'], howto: '外卖直接下单，指定少油。' }
+      { key: 'balanced', title: '今天最合适', dish: '番茄虾仁豆腐煲 + 一拳米饭 + 一份青菜', reason: '最近两餐蛋白质多为猪肉，这一餐换成虾和豆腐更丰富。', budget: '30~45 元', time: '25 分钟', allergens: ['虾', '大豆'], swaps: ['虾仁 ↔ 鸡胸肉'], howto: '外卖搜"豆腐煲"，或在家：热油下姜蒜，番茄炒软后加水、豆腐、虾仁煮 5 分钟。', signatureDishes: ['番茄虾仁豆腐煲', '家常小炒', '例汤'] },
+      { key: 'crave', title: '今天最想吃', dish: '清汤麻辣烫（牛肉+豆腐+菌菇+粉）', reason: '照顾情绪与口味，保留辣味但少喝汤。', budget: '25~35 元', time: '15 分钟', allergens: ['大豆'], swaps: ['粉 ↔ 魔芋'], howto: '附近麻辣烫店或外卖任选，告知不要额外辣油。', signatureDishes: ['麻辣烫拼菜', '牛肉粉', '卤味拼盘'] },
+      { key: 'easy', title: '今天最省事', dish: '海南鸡饭 + 一份青菜', reason: '出餐快、附近好找。', budget: '22~28 元', time: '10 分钟', allergens: [], swaps: ['青菜 ↔ 西兰花'], howto: '外卖直接下单，指定少油。', signatureDishes: ['海南鸡饭', '咖喱鸡饭'] }
     ]
   },
   dailyNutrition: {
@@ -75,9 +76,11 @@ const SCHEMAS = {
             type: 'object',
             properties: {
               name: { type: 'string' },
-              portion: { type: 'string' }
+              portion: { type: 'string' },
+              category: { type: 'string', enum: ['staple', 'veg', 'fruit', 'meat', 'seafood', 'egg', 'bean', 'dairy', 'other'] },
+              calories: { type: 'number' }
             },
-            required: ['name', 'portion']
+            required: ['name', 'portion', 'category', 'calories']
           }
         }
       },
@@ -104,7 +107,8 @@ const SCHEMAS = {
               allergens: { type: 'array', items: { type: 'string' } },
               swaps:     { type: 'array', items: { type: 'string' } },
               howto:     { type: 'string' },
-              placeId:   { type: 'string' }
+              placeId:   { type: 'string' },
+              signatureDishes: { type: 'array', items: { type: 'string' } }
             },
             required: ['key', 'title', 'dish', 'reason', 'budget', 'time']
           }
@@ -327,16 +331,18 @@ export default async function handler(req, res) {
     const { action, payload } = body || {}
 
     if (action === 'recognizeMeal') {
-      const { imageDataUrl, ...ctx } = payload || {}
-      if (!imageDataUrl) return res.status(200).json({ ok: true, source: 'mock', data: MOCK.recognizeMeal })
+      const { imageDataUrl, textDescription, ...ctx } = payload || {}
+      if (!imageDataUrl && !textDescription) {
+        return res.status(200).json({ ok: true, source: 'mock', data: MOCK.recognizeMeal })
+      }
       try {
+        const task = imageDataUrl
+          ? '识别照片中的菜品，菜名尽量具体到食材种类（例如"西兰花""菠菜"而不是笼统的"青菜""时蔬"；"红烧排骨"而不是笼统的"肉"），输出菜名、大致份量、食物分类 category 和粗略热量 calories(kcal)。不要输出可信度、不要输出提问。若不确定具体品种，才退回用笼统名称，不确定的项宁可少列。'
+          : `根据文字描述估算菜品列表，菜名尽量具体到食材种类（例如"西兰花"而不是笼统的"青菜"），输出菜名、大致份量、食物分类 category 和粗略热量 calories(kcal)。文字描述：${textDescription}`
         const data = await callClaude(
-          Object.assign({
-            task: '识别照片中的菜品，只输出菜名和大致份量。不要输出可信度、不要输出提问。若不确定，宁可少列几项。',
-            ...ctx
-          }),
+          Object.assign({ task }, ctx),
           'recognizeMeal',
-          { imageDataUrl }
+          imageDataUrl ? { imageDataUrl } : {}
         )
         if (data && Array.isArray(data.items) && data.items.length) {
           return res.status(200).json({ ok: true, source: 'claude', data })
@@ -421,10 +427,15 @@ export default async function handler(req, res) {
               console.log('[maps] fallback assigned:', fallback.name)
             }
           }
-          const nearbyLinks = placesForMatching.slice(0, 4).map(p => ({
+          const nearbyLinks = placesForMatching.slice(0, 6).map(p => ({
             name: p.name,
             rating: p.rating,
+            userRatingCount: p.userRatingCount,
             distanceMeters: p.distanceMeters,
+            priceLevel: p.priceLevel,
+            openNow: p.openNow,
+            address: p.address,
+            typicalDishes: p.typicalDishes,
             mapsUrl: p.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + p.placeId : null
           })).filter(l => l.mapsUrl)
           return res.status(200).json({
