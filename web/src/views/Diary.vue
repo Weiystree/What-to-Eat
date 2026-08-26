@@ -1,6 +1,11 @@
 <template>
   <div>
-    <div class="card overview-card">
+    <div class="tab-switch">
+      <span class="tab-btn" :class="{ active: activeView === 'summary' }" @click="activeView = 'summary'">本周概览</span>
+      <span class="tab-btn" :class="{ active: activeView === 'log' }" @click="activeView = 'log'">每餐记录</span>
+    </div>
+
+    <div v-if="activeView === 'summary'" class="card overview-card">
       <h2 class="title" style="font-size:16px;">本周概览</h2>
       <p v-if="isEmpty" class="subtitle" style="margin:0;">还没有记录，去上传第一顿饭吧。</p>
       <template v-else>
@@ -9,10 +14,14 @@
             <span class="overview-num">{{ weeklyFoodStats.totalKinds }}</span>
             <span class="overview-label">种食物 · 目标每周 {{ weeklyFoodStats.target }} 种+</span>
           </div>
-          <div class="chip-row">
-            <span v-for="c in weeklyFoodStats.byCategory.filter(c => c.count)" :key="c.key" class="chip">
-              {{ c.icon }} {{ c.label }} {{ c.count }}
-            </span>
+          <div class="kind-bars">
+            <div v-for="c in weeklyFoodStats.byCategory.filter(c => c.count)" :key="c.key" class="kind-bar-row">
+              <span class="kind-bar-label">{{ c.icon }} {{ c.label }}</span>
+              <div class="kind-bar-track">
+                <div class="kind-bar-fill" :style="{ width: (c.count / maxKindCount * 100) + '%' }"></div>
+              </div>
+              <span class="kind-bar-num">{{ c.count }}</span>
+            </div>
           </div>
         </div>
         <div class="overview-section">
@@ -34,43 +43,46 @@
       </template>
     </div>
 
-    <template v-for="g in groups" :key="g.day">
-      <div class="day-title-row">
-        <div class="day-title">{{ g.day }}</div>
-        <div class="day-kinds">
-          今天吃了 {{ g.kindsStats.totalKinds }} 种
-          <span v-for="c in g.kindsStats.byCategory.filter(c => c.count)" :key="c.key" class="mini-chip">{{ c.icon }}{{ c.count }}</span>
-        </div>
-      </div>
-      <div v-for="e in g.entries" :key="e.id" class="card">
-        <div class="head">
-          <span class="meal">{{ e.meal || '一餐' }}</span>
-          <span class="time">{{ e.timeLabel }}</span>
-          <span class="actions">
-            <button class="act" @click="startEdit(e)">编辑</button>
-            <button class="act danger" @click="onDelete(e)">删除</button>
-          </span>
-        </div>
-        <div class="entry-body">
-          <div class="entry-img">
-            <img v-if="e.imageSrc" :src="e.imageSrc" class="preview"/>
-            <div v-else class="img-placeholder">🍽</div>
+    <div v-if="activeView === 'log'">
+      <p v-if="isEmpty" class="subtitle">还没有记录，去上传第一顿饭吧。</p>
+      <template v-for="g in groups" :key="g.day">
+        <div class="day-title-row">
+          <div class="day-title">{{ g.day }}</div>
+          <div class="day-kinds">
+            今天吃了 {{ g.kindsStats.totalKinds }} 种
+            <span v-for="c in g.kindsStats.byCategory.filter(c => c.count)" :key="c.key" class="mini-chip">{{ c.icon }}{{ c.count }}</span>
           </div>
-          <div class="entry-nutri">
-            <div v-for="it in e.items" :key="it.name + it.portion" class="nutri-chip">
-              <span class="nutri-icon">{{ getCategoryMeta(it.category).icon }}</span>
-              <span class="nutri-name">{{ it.name }}</span>
-              <span class="nutri-portion">· {{ it.portion }}</span>
+        </div>
+        <div v-for="e in g.entries" :key="e.id" class="card">
+          <div class="head">
+            <span class="meal">{{ e.meal || '一餐' }}</span>
+            <span class="time">{{ e.timeLabel }}</span>
+            <span class="actions">
+              <button class="act" @click="startEdit(e)">编辑</button>
+              <button class="act danger" @click="onDelete(e)">删除</button>
+            </span>
+          </div>
+          <div class="entry-body">
+            <div class="entry-img">
+              <img v-if="e.imageSrc" :src="e.imageSrc" class="preview"/>
+              <div v-else class="img-placeholder">🍽</div>
             </div>
-            <div v-if="e.totalCalories" class="entry-kcal">合计约 {{ e.totalCalories }} kcal</div>
+            <div class="entry-nutri">
+              <div v-for="it in e.items" :key="it.name + it.portion" class="nutri-chip">
+                <span class="nutri-icon">{{ getCategoryMeta(it.category).icon }}</span>
+                <span class="nutri-name">{{ it.name }}</span>
+                <span class="nutri-portion">· {{ it.portion }}</span>
+              </div>
+              <div v-if="e.totalCalories" class="entry-kcal">合计约 {{ e.totalCalories }} kcal</div>
+            </div>
           </div>
+          <div v-if="e.feedback" class="fb">
+            满意度 {{ e.feedback.score }} · 饱腹感 {{ e.feedback.fullness }} · {{ e.feedback.feel }}
+          </div>
+          <div v-else-if="e.awaitingFeedback" class="fb">等待你的饭后反馈…</div>
         </div>
-        <div v-if="e.feedback" class="fb">
-          满意度 {{ e.feedback.score }} · 饱腹感 {{ e.feedback.fullness }} · {{ e.feedback.feel }}
-        </div>
-        <div v-else-if="e.awaitingFeedback" class="fb">等待你的饭后反馈…</div>
-      </div>
-    </template>
+      </template>
+    </div>
 
     <!-- 编辑弹层 -->
     <div v-if="editing" class="mask" @click.self="cancelEdit">
@@ -109,7 +121,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import {
   getDiary, updateDiary, deleteDiary, getProfile,
   getCategoryMeta, mergeFoodEstimates, summarizeFoodKinds,
@@ -117,10 +129,12 @@ import {
 } from '../services/store.js'
 import { estimateMeal } from '../services/agent.js'
 
+const activeView = ref('summary')
 const groups = ref([])
 const isEmpty = ref(true)
 const weeklyFoodStats = ref({ totalKinds: 0, byCategory: [], target: 25 })
 const weeklyCalories = ref({ days: [], weekTotal: 0, maxKcal: 1 })
+const maxKindCount = computed(() => Math.max(1, ...weeklyFoodStats.value.byCategory.map(c => c.count)))
 const editing = ref(false)
 const savingEdit = ref(false)
 const draft = reactive({ id: null, meal: '', items: [], feedback: null })
@@ -210,6 +224,19 @@ async function saveEdit() {
 </script>
 
 <style scoped>
+.tab-switch {
+  display: flex; gap: 8px; margin-bottom: 16px;
+}
+.tab-btn {
+  flex: 1; text-align: center; padding: 10px 0;
+  font-size: 14px; color: #a89684; background: #fff;
+  border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(74,52,40,0.10);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.tab-btn.active { background: #c46a3a; color: #fff; border-color: #c46a3a; }
+
 .overview-card { display: flex; flex-direction: column; gap: 20px; }
 .overview-section + .overview-section { padding-top: 16px; border-top: 1px solid rgba(74,52,40,0.08); }
 .overview-row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
@@ -220,6 +247,15 @@ async function saveEdit() {
   background: #f3ecdf; color: #5a4a3f; font-size: 12px;
   padding: 5px 10px; border-radius: 999px;
 }
+.kind-bars { display: flex; flex-direction: column; gap: 8px; }
+.kind-bar-row { display: flex; align-items: center; gap: 8px; }
+.kind-bar-label { flex: 0 0 64px; font-size: 12px; color: #5a4a3f; }
+.kind-bar-track {
+  flex: 1; height: 8px; border-radius: 4px;
+  background: rgba(74,52,40,0.06); overflow: hidden;
+}
+.kind-bar-fill { height: 100%; background: #c46a3a; border-radius: 4px; min-width: 3px; }
+.kind-bar-num { flex: 0 0 18px; text-align: right; font-size: 12px; color: #a89684; }
 .bars { display: flex; align-items: flex-end; gap: 8px; height: 72px; }
 .bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; }
 .bar-track {

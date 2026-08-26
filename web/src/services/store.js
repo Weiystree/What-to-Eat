@@ -4,6 +4,7 @@ const K_DIARY = 'meal_diary'
 const K_TODAY = 'meal_today_ctx'
 const K_LAST_RECO = 'meal_last_reco'
 const K_PENDING = 'meal_pending'  // 页面间临时数据（识别结果、当前选中的推荐卡）
+const K_COMMUNITY = 'meal_community_me'  // 我的社区身份 {code,name,emoji}
 
 function readJSON(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback } catch (e) { return fallback }
@@ -43,6 +44,10 @@ const K_NUTRITION = 'meal_nutrition'
 export function getCachedNutrition() { return readJSON(K_NUTRITION, null) }
 export function setCachedNutrition(n) { writeJSON(K_NUTRITION, n) }
 
+// —— 社区身份 ——
+export function getCommunityMe() { return readJSON(K_COMMUNITY, null) }
+export function setCommunityMe(me) { writeJSON(K_COMMUNITY, me) }
+
 export function getPending(key) {
   const p = readJSON(K_PENDING, {})
   return p[key]
@@ -54,7 +59,7 @@ export function setPending(key, val) {
 }
 
 export function clearAll() {
-  [K_PROFILE, K_DIARY, K_TODAY, K_LAST_RECO, K_PENDING, K_LOCATION].forEach(k => localStorage.removeItem(k))
+  [K_PROFILE, K_DIARY, K_TODAY, K_LAST_RECO, K_PENDING, K_LOCATION, K_COMMUNITY].forEach(k => localStorage.removeItem(k))
 }
 
 // —— 地理位置（用于附近餐厅推荐） ——

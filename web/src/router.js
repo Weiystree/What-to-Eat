@@ -12,7 +12,9 @@ const routes = [
   { path: '/recommend', component: () => import('./views/RecommendList.vue') },
   { path: '/recommend/detail', component: () => import('./views/RecommendDetail.vue') },
   { path: '/recommend/feedback', component: () => import('./views/Feedback.vue') },
+  { path: '/agent', component: () => import('./views/Agent.vue') },
   { path: '/diary', component: () => import('./views/Diary.vue'), meta: { tab: true } },
+  { path: '/community', component: () => import('./views/Community.vue'), meta: { tab: true } },
   { path: '/mine', component: () => import('./views/Mine.vue'), meta: { tab: true } }
 ]
 

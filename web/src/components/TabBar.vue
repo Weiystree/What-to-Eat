@@ -11,6 +11,7 @@ const tabs = [
   { path: '/today', label: '今日' },
   { path: '/diary', label: '日记' },
   { path: '/party', label: '聚餐' },
+  { path: '/community', label: '社区' },
   { path: '/mine', label: '我的' }
 ]
 </script>
