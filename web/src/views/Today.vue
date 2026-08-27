@@ -14,7 +14,7 @@
         <div class="snap-label">随手拍</div>
         <div class="snap-desc">拍照识别吃了什么</div>
       </div>
-      <input ref="snapInput" type="file" accept="image/*" capture="environment" hidden @change="onSnapPhoto" />
+      <input ref="snapInput" type="file" accept="image/*" hidden @change="onSnapPhoto" />
 
       <!-- 两个半宽按钮 -->
       <div class="dual-row">
@@ -23,7 +23,7 @@
           <div class="dual-label">在家做</div>
           <div class="dual-desc">拍冰箱 · 推荐菜</div>
         </div>
-        <input ref="fridgeInput" type="file" accept="image/*" capture="environment" hidden @change="onFridgePhoto" />
+        <input ref="fridgeInput" type="file" accept="image/*" hidden @change="onFridgePhoto" />
 
         <div class="dual-btn" @click="onSceneOut">
           <div class="dual-icon">🍽️</div>
@@ -194,6 +194,8 @@
             </div>
           </div>
         </div>
+
+        <div class="fridge-saved-note">🥬 识别到的食材已保存到本机冰箱清单</div>
       </div>
     </div>
 
@@ -222,7 +224,8 @@ import {
   getProfile, getDiary, getTodayContext, setTodayContext,
   deriveAgeMode, setPending, getDeliveryStores,
   getSavedLocation, requestGeolocation, appendDiary,
-  getCachedNutrition, setCachedNutrition
+  getCachedNutrition, setCachedNutrition,
+  setFridgeInventory
 } from '../services/store.js'
 import { recognizeMeal, dailyNutrition, estimateMeal, fridgeToRecipe } from '../services/agent.js'
 
@@ -402,6 +405,7 @@ async function onFridgePhoto(e) {
     capturing.value = false
     if (r && r.ok && r.data) {
       fridgeResult.value = r.data
+      setFridgeInventory(r.data.ingredients || [])
       showFridgeResult.value = true
     }
   } catch (err) {
@@ -812,6 +816,11 @@ function compressToDataUrl(file) {
   font-weight: 500;
 }
 .dish-bili-link:active { opacity: 0.7; }
+.fridge-saved-note {
+  margin-top: 4px; padding: 12px 14px;
+  border-radius: 12px; background: #f0f8f0;
+  color: #4a7a4a; font-size: 13px; text-align: center;
+}
 
 /* ===== Agent 入口悬浮按钮 ===== */
 .agent-fab {

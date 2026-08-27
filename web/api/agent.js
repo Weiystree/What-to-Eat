@@ -180,7 +180,8 @@ async function getRedis() {
     const { Redis } = await import('@upstash/redis')
     _redis = new Redis({
       url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+      automaticDeserialization: false
     })
   } catch (e) {
     console.error('[community] redis init error:', e.message)
