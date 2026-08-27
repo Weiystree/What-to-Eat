@@ -2,7 +2,8 @@
 // 由 lib/runtime/orchestrator.js 消费；runner 来自 lib/runtime/runners.js。
 
 import {
-  runRecommend, runDailyNutrition, runParty, runRecognizeMeal, runFridgeToRecipe
+  runRecommend, runDailyNutrition, runParty, runRecognizeMeal, runFridgeToRecipe,
+  runIngredients, runMealMemory
 } from './runners.js'
 
 // 每个 skill 的 tool 输入（最小参数；重数据如 profile/recentDiary 由 orchestrator 注入 memory）
@@ -38,6 +39,20 @@ const AGENT_TOOL_INPUTS = {
     properties: {
       note: { type: 'string', description: '可选：用户对冰箱食材的补充说明' }
     }
+  },
+  meal_ingredients: {
+    type: 'object',
+    properties: {
+      ingredients: { type: 'string', description: '用户用文字列出的现有食材，逗号分隔，如"鸡蛋、西兰花、面条"' }
+    },
+    required: ['ingredients']
+  },
+  meal_memory: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: '用户问的日期/餐次，如"昨天中午""今天晚餐"' }
+    },
+    required: ['query']
   }
 }
 
@@ -68,9 +83,21 @@ const SKILL_REGISTRY = [
   },
   {
     name: 'meal_fridge',
-    description: '识别冰箱照片中的食材并标注新鲜度，推荐能用现有食材做的家常菜。当用户上传冰箱照片时调用。',
+    description: '仅识别冰箱照片中的食材并标注新鲜度，推荐能用这些食材做的家常菜。当用户上传冰箱照片时调用；没有照片时不要调用。',
     input: AGENT_TOOL_INPUTS.meal_fridge,
     runner: runFridgeToRecipe
+  },
+  {
+    name: 'meal_ingredients',
+    description: '根据用户用文字列出的现有食材，推荐能做的家常菜（含还缺什么）。当用户说"家里有X、Y、Z能做啥"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_ingredients,
+    runner: runIngredients
+  },
+  {
+    name: 'meal_memory',
+    description: '按日期/餐次查询用户的历史餐食记录。当用户问"昨天/前天某餐吃了什么"时调用（不要凭记忆猜）。',
+    input: AGENT_TOOL_INPUTS.meal_memory,
+    runner: runMealMemory
   }
 ]
 

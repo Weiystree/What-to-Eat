@@ -19,7 +19,10 @@ export function setProfile(p) { writeJSON(K_PROFILE, p) }
 export function getDiary() { return readJSON(K_DIARY, []) }
 export function appendDiary(entry) {
   const list = getDiary()
-  list.unshift(Object.assign({ id: Date.now(), createdAt: Date.now() }, entry))
+  const now = Date.now()
+  const d = new Date(now)
+  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  list.unshift(Object.assign({ id: now, createdAt: now, date }, entry))
   writeJSON(K_DIARY, list)
   return list
 }

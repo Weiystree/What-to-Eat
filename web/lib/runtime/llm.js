@@ -127,6 +127,37 @@ const MOCK = {
         howto: '肉末炒香盛出，番茄炒出汁加水煮开，下面条煮熟，倒回肉末调味'
       }
     ]
+  },
+  ingredients: {
+    dishes: [
+      {
+        name: '西兰花鸡蛋面',
+        reason: '鸡蛋+西兰花+面条一锅出，主食蛋白蔬菜一次配齐',
+        uses: ['鸡蛋', '西兰花', '面条'],
+        missing: ['蒜'],
+        time: '15 分钟',
+        difficulty: '简单',
+        howto: '水开下面条，快熟时下西兰花焯一下，另起锅炒鸡蛋，捞出面和西兰花拌匀加盐调味'
+      },
+      {
+        name: '蒜蓉西兰花 + 荷包蛋面',
+        reason: '西兰花清炒配荷包蛋，简单营养又清爽',
+        uses: ['鸡蛋', '西兰花', '面条'],
+        missing: ['蒜'],
+        time: '15 分钟',
+        difficulty: '简单',
+        howto: '面条煮熟，西兰花蒜蓉快炒，另煎荷包蛋，摆盘即可'
+      },
+      {
+        name: '鸡蛋饼 + 清炒西兰花',
+        reason: '鸡蛋摊饼当主食，配清炒西兰花，快手又饱腹',
+        uses: ['鸡蛋', '西兰花'],
+        missing: ['面粉', '葱'],
+        time: '20 分钟',
+        difficulty: '简单',
+        howto: '鸡蛋加面粉调糊摊饼，西兰花快炒，搭配食用'
+      }
+    ]
   }
 }
 
@@ -293,6 +324,32 @@ const SCHEMAS = {
       },
       required: ['ingredients', 'dishes']
     }
+  },
+  ingredients: {
+    name: 'submit_ingredient_dishes',
+    description: '提交基于用户现有食材可做的家常菜（含还缺什么）',
+    input_schema: {
+      type: 'object',
+      properties: {
+        dishes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              reason: { type: 'string' },
+              uses: { type: 'array', items: { type: 'string' } },
+              missing: { type: 'array', items: { type: 'string' } },
+              time: { type: 'string' },
+              difficulty: { type: 'string' },
+              howto: { type: 'string' }
+            },
+            required: ['name', 'reason', 'uses', 'time']
+          }
+        }
+      },
+      required: ['dishes']
+    }
   }
 }
 
@@ -303,7 +360,8 @@ const MAX_TOKENS = {
   dailyNutrition: 500,
   party:         900,
   chat:           400,
-  fridgeToRecipe: 800
+  fridgeToRecipe: 800,
+  ingredients:    800
 }
 
 async function callLLM(userJson, schemaKey, opts) {

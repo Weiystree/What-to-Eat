@@ -181,6 +181,64 @@ export async function runChat(payload) {
   return { ok: true, source: 'mock', data: MOCK.chat }
 }
 
+// 文字食材 → 可做的菜（含还缺什么）。用户说"家里有X、Y、Z能做啥"时走这里。
+export async function runIngredients(payload) {
+  const ingredients = (payload && typeof payload.ingredients === 'string' && payload.ingredients.trim()) || ''
+  if (!ingredients) return { ok: true, source: 'mock', data: MOCK.ingredients }
+  try {
+    const data = await callLLM(
+      Object.assign({
+        task: `用户现有食材：${ingredients}。请基于这些食材推荐 2~3 道可做的家常菜（可少量补充常见调料或配菜），每道说明：为什么推荐、用到哪些现有食材、还缺什么（可去买）、大致时间和简要做法。优先推荐能尽量多消耗现有食材、步骤简单的菜。`
+      }, payload || {}),
+      'ingredients'
+    )
+    if (data && Array.isArray(data.dishes)) return { ok: true, source: 'llm', data }
+  } catch (e) { console.error('ingredients llm error:', e.message) }
+  return { ok: true, source: 'mock', data: MOCK.ingredients }
+}
+
+// 饮食记忆查询：按日期（今天/昨天/前天/大前天）+ 餐次过滤 recentDiary。确定性、不调 LLM。
+export async function runMealMemory(payload) {
+  const diary = (payload && Array.isArray(payload.recentDiary)) ? payload.recentDiary : []
+  const query = (payload && typeof payload.query === 'string' && payload.query.trim()) || ''
+  if (!diary.length || !query) {
+    return { ok: true, source: 'memory', data: { query, dayLabel: '', meal: '', count: 0, entries: [] } }
+  }
+  return { ok: true, source: 'memory', data: matchDiary(diary, query) }
+}
+
+function matchDiary(diary, query) {
+  const q = String(query)
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const t0 = today.getTime()
+  const DAY = 24 * 60 * 60 * 1000
+  let start = t0, end = t0 + DAY, dayLabel = '今天'
+  if (/昨天|昨儿/.test(q)) { start = t0 - DAY; end = t0; dayLabel = '昨天' }
+  else if (/前天/.test(q)) { start = t0 - 2 * DAY; end = t0 - DAY; dayLabel = '前天' }
+  else if (/大前天/.test(q)) { start = t0 - 3 * DAY; end = t0 - 2 * DAY; dayLabel = '大前天' }
+
+  let meal = ''
+  if (/早餐|早饭/.test(q)) meal = '早餐'
+  else if (/午餐|午饭|中饭|中午/.test(q)) meal = '午餐'
+  else if (/晚餐|晚饭/.test(q)) meal = '晚餐'
+  else if (/加餐|夜宵|宵夜|零食/.test(q)) meal = '加餐'
+
+  const entries = diary.filter(d => {
+    if (!d) return false
+    const ts = Number(d.createdAt || d.ts || 0)
+    if (!ts || ts < start || ts >= end) return false
+    if (meal && d.meal && !String(d.meal).includes(meal)) return false
+    return true
+  }).map(d => ({
+    meal: d.meal,
+    date: d.date || '',
+    items: (d.items || []).map(i => ({ name: i.name, portion: i.portion, calories: i.calories })),
+    deliveryStore: d.deliveryStore || ''
+  }))
+
+  return { query: q, dayLabel, meal, count: entries.length, entries }
+}
+
 // 精简 recommend payload：只保留模型真正需要的字段，缩短 tokens 和响应时间
 function slimRecommendPayload(p) {
   const out = {}
