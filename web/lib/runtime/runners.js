@@ -230,21 +230,24 @@ export async function runMealMemory(payload) {
   return { ok: true, source: 'memory', data: matchDiary(diary, query) }
 }
 
-function matchDiary(diary, query) {
+export function matchDiary(diary, query, now = new Date()) {
   const q = String(query)
-  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const today = new Date(now); today.setHours(0, 0, 0, 0)
   const t0 = today.getTime()
   const DAY = 24 * 60 * 60 * 1000
   let start = t0, end = t0 + DAY, dayLabel = '今天'
+  // 「大前天」包含「前天」，必须先判断，否则永远走不到
   if (/昨天|昨儿/.test(q)) { start = t0 - DAY; end = t0; dayLabel = '昨天' }
-  else if (/前天/.test(q)) { start = t0 - 2 * DAY; end = t0 - DAY; dayLabel = '前天' }
   else if (/大前天/.test(q)) { start = t0 - 3 * DAY; end = t0 - 2 * DAY; dayLabel = '大前天' }
+  else if (/前天/.test(q)) { start = t0 - 2 * DAY; end = t0 - DAY; dayLabel = '前天' }
 
+  // 餐次取值与 mealTime.js 写入日记的一致：夜宵 和 加餐 是两个独立餐次
   let meal = ''
   if (/早餐|早饭/.test(q)) meal = '早餐'
   else if (/午餐|午饭|中饭|中午/.test(q)) meal = '午餐'
   else if (/晚餐|晚饭/.test(q)) meal = '晚餐'
-  else if (/加餐|夜宵|宵夜|零食/.test(q)) meal = '加餐'
+  else if (/夜宵|宵夜/.test(q)) meal = '夜宵'
+  else if (/加餐|零食/.test(q)) meal = '加餐'
 
   const entries = diary.filter(d => {
     if (!d) return false
