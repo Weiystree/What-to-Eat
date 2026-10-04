@@ -26,10 +26,13 @@ Agent 结合画像+状态+近期饮食+外卖店铺 → 三选一推荐 →
 ```
 
 ### 也支持
+- **持久化冰箱**：冷藏 / 零度保鲜 / 冷冻三区食材清单，确定性保质期规则算新鲜度，拍照 / 手动 / 告诉 Agent 三种录入，「用它做点什么」→ 做完自动扣减库存
+- **Food Agent**：自然语言入口（`/agent`），LLM 自主选工具（推荐 / 营养 / 聚餐 / 识别 / 冰箱 / 食材做菜 / 历史查询）
 - **聚餐场景**：多人合并画像 → 生成三张聚餐方案（最适合所有人 / 最有趣 / 最方便）
-- **冰箱拍照**：拍冰箱 → 识别食材新鲜度 → 推荐能消耗临期食材的家常菜（`fridgeToRecipe`）
-- **社区**：邀请码加好友 + 好友间晒饭动态（跨设备，走 Upstash Redis）
+- **饭搭子**：邀请码加好友 + 好友间晒饭动态（跨设备，走 Upstash Redis）
 - **画像分享**：一键导出为 `MEAL1:` 编码文本，朋友粘贴即可用你的偏好
+
+> 产品主线与 V2 重构目标见 [v2.md](./v2.md)；当前完成度见下方「十一、当前进度」。
 
 ### 明确不做（第一版）
 - 家庭健康管理、疾病治疗菜单、医学诊断
@@ -40,22 +43,25 @@ Agent 结合画像+状态+近期饮食+外卖店铺 → 三选一推荐 →
 
 ## 二、页面清单
 
-底部五个 Tab：`今日 | 日记 | 聚餐 | 社区 | 我的`。所有页面在 `web/src/views/` 下。
+底部五个 Tab：`今日 | 冰箱 | 日记 | 饭搭子 | 我的`。所有页面在 `web/src/views/` 下。
 
 | 路由 | 文件 | 作用 |
 | --- | --- | --- |
 | `/onboarding/brand` | Brand.vue | 品牌介绍，正式建档 / 先体验 |
 | `/onboarding/basic` | Basic.vue | 基础信息 + **可自定义添加**过敏原和忌口 |
 | `/onboarding/prefer` | Prefer.vue | 口味场景：菜系、辣度、用餐方式、单餐预算 |
-| `/today` | Today.vue | **今日 Tab**。今日营养建议卡 + 状态问答 + 个性化补充 + 拍照入口 + 冰箱识别入口 + 帮我决定 |
+| `/today` | Today.vue | **今日 Tab**。两个入口：「下一餐想怎么吃」（在家做/出去吃）+「记录这一餐」（拍照/手动/告诉 Agent）+ 今日营养 + 临期提醒 |
 | `/capture/confirm` | Confirm.vue | 拍照后确认：勾选正确候选或自填 + 餐次 + 外卖店铺 |
 | `/recommend` | RecommendList.vue | 三张推荐卡 + "更健康/更符合口味/直接换一批"三档换 |
 | `/recommend/detail` | RecommendDetail.vue | 单张卡详情 + 追问区 + "就吃这个" |
 | `/recommend/feedback` | Feedback.vue | 饭后 4 项快评；"其他"选中时可写具体感受 |
-| `/party` | Party.vue | **聚餐 Tab**。加人 → 逐位填画像 或 粘朋友导出的文本 → 生成三选一 |
-| `/diary` | Diary.vue | **日记 Tab**。本周概览（营养维度条形图）+ 每餐记录（编辑/删除） |
-| `/community` | Community.vue | **社区 Tab**。创建身份（昵称+emoji）→ 邀请码 → 加好友 → 好友晒饭动态流 |
+| `/fridge` | Fridge.vue | **冰箱 Tab**。分区食材清单 + 新鲜度 + 拍/手动/告诉 Agent 录入 + 「用它做点什么」→ 完成扣减 |
+| `/diary` | Diary.vue | **日记 Tab**。本周概览（种类数 + 每日热量柱状图）+ 每餐记录（编辑/删除） |
+| `/partner` | Partner.vue | **饭搭子 Tab**。聚餐「帮我们决定」+ 好友邀请码/晒饭动态流 |
 | `/mine` | Mine.vue | **我的 Tab**。画像 + 导出/导入 + 接入状态 + 清空 |
+| `/agent` | Agent.vue | **Food Agent 对话页**（非 Tab）。从今日页悬浮按钮进入，调 `action: 'agent'` |
+
+> `/party`、`/community` 旧路由已重定向到 `/partner`；旧的 `Party.vue` / `Community.vue` 已删除，功能并入 `Partner.vue`。
 
 未 `onboarded` 的用户任何路径都会被 `router.beforeEach` 拦到 `/onboarding/brand`。
 
@@ -71,17 +77,31 @@ web/
 ├─ vercel.json                     SPA 回退：非 /api 都指向 index.html
 ├─ .env.example                    环境变量样板
 ├─ api/
-│  └─ agent.js                     Vercel Serverless Function（唯一后端）
+│  └─ agent.js                     Vercel Serverless 入口：按 action 分发 + 社区(Redis)就地处理
+├─ lib/runtime/                    后端运行时（被 api/agent.js 与 eval 共用）
+│  ├─ runners.js                   各 action 的执行器（recommend / recognizeMeal / fridgeItems / ingredients / mealMemory …）
+│  ├─ llm.js                       callLLM（Function Calling / JSON Mode）+ callAgent（多轮 tool calling）+ schema
+│  ├─ orchestrator.js              Agent 编排：System Prompt + 最多 3 步 tool 循环，返回 reply + trace
+│  ├─ skills.js                    Agent 工具注册表（7 个 skill ↔ runner）
+│  └─ places.js                    Google Places 附近餐厅
+├─ .claude/skills/                 meal-* 技能说明（recommend / nutrition / party / recognize / fridge / chat）
+├─ eval/                           Agent 工具路由评估（见十二）
+│  ├─ cases.mjs                    15 条用例 + 统一虚拟用户 BASE_MEMORY
+│  ├─ run.mjs                      本地执行器（直接调 orchestrator）
+│  └─ run-http.mjs                 线上执行器（POST 已部署 /api/agent）
+├─ v2.md                           V2 产品重构规格
 └─ src/
    ├─ main.js                      挂载 App、注册 router、引入全局样式
    ├─ App.vue                      顶层容器 + <TabBar>
    ├─ router.js                    hash 路由 + 未 onboarded 拦截
-   ├─ components/TabBar.vue        今日/日记/聚餐/社区/我的
+   ├─ components/TabBar.vue        今日/冰箱/日记/饭搭子/我的
    ├─ services/
    │  ├─ agent.js                  统一 fetch → /api/agent；失败降级本地 mock
-   │  └─ store.js                  localStorage 封装 + 画像导出/导入 + 店铺聚合
-   ├─ styles/global.css            iOS 风格设计系统
-   └─ views/                       14 个页面（见上表）
+   │  ├─ store.js                  localStorage 封装（key 单一登记 ALL_KEYS）+ formatDateKey + 画像导出/导入 + 店铺聚合
+   │  ├─ shelfLife.js              冰箱保质期/新鲜度（确定性规则，无 LLM）+ deductInventory 扣减
+   │  └─ mealTime.js               餐次推断 guessMeal / guessNextMeal（全站唯一实现）
+   ├─ styles/global.css            设计系统
+   └─ views/                       13 个页面文件（见上表）
 ```
 
 ---
@@ -124,7 +144,7 @@ web/
 | 场景 | 模型 | 机制 |
 | --- | --- | --- |
 | 纯文本（recommend / dailyNutrition / party / chat） | `glm-4-flash` | **Function Calling**：把 schema 转成 tool，`tool_choice` 强制调用，严格保证 JSON 结构 |
-| 含图片（recognizeMeal / fridgeToRecipe） | `glm-4v-flash` | **JSON Mode**：`glm-4v-flash` 不支持 function calling，改用 `response_format: {type:"json_object"}` + 把 schema 写进 user message |
+| 含图片（recognizeMeal / fridgeToRecipe / fridgeItems） | `glm-4v-flash` | **JSON Mode**：`glm-4v-flash` 不支持 function calling，改用 `response_format: {type:"json_object"}` + 把 schema 写进 user message |
 
 两种模式都走 `callLLM(userJson, schemaKey, opts)`，返回后统一 `extractJsonBlock` + `repairJson` 兜底解析。
 
@@ -133,16 +153,38 @@ web/
 | action | 触发页面 | 说明 | 数据来源 |
 | --- | --- | --- | --- |
 | `recognizeMeal` | Today 拍照 | 识别菜品+份量，附 category/calories | llm（vision） |
-| `fridgeToRecipe` | Today 冰箱入口 | 识别冰箱食材新鲜度 + 推荐 2~3 道菜 | llm（vision） |
+| `fridgeToRecipe` | （旧流程，保留兼容） | 识别冰箱食材 + 推荐 2~3 道菜 | llm（vision） |
+| `fridgeItems` | Fridge 拍冰箱/告诉 Agent | 照片或文字 → 结构化食材清单（name/category/quantity/unit/storageZone/freshness） | llm（vision 或 text） |
+| `ingredients` | Fridge 用它做点什么 | 文字食材 → 可做的菜（含还缺什么） | llm（text） |
 | `recommend` | RecommendList | 三选一推荐（可带 nearbyPlaces / refineHint） | llm（text） |
 | `dailyNutrition` | Today 首屏 | 今日营养建议卡 | llm（text） |
-| `party` | Party | 多人合并画像 → 三选一 | llm（text） |
+| `party` | Partner 帮我们决定 | 多人合并画像 → 三选一 | llm（text） |
 | `chat` | RecommendDetail | 追问 | llm（text） |
-| `communityRegister` | Community | 创建身份，生成邀请码 | redis（未配置→mock） |
-| `communityAddFriend` | Community | 邀请码加好友（双向） | redis |
-| `communityFriends` | Community | 拉好友列表 | redis |
-| `communityPost` | Community | 发布晒饭动态 | redis |
-| `communityFeed` | Community | 拉取好友+自己的动态流 | redis |
+| `agent` | Agent.vue | 自然语言入口：LLM 自主选工具并汇总回复，返回 `{reply, trace, ...最后一个工具的结构化数据}` | llm（多轮 tool calling） |
+| `communityRegister` | Partner | 创建身份，生成邀请码 | redis（未配置→mock） |
+| `communityAddFriend` | Partner | 邀请码加好友（双向） | redis |
+| `communityFriends` | Partner | 拉好友列表 | redis |
+| `communityPost` | Partner | 发布晒饭动态 | redis |
+| `communityFeed` | Partner | 拉取好友+自己的动态流 | redis |
+
+### 4.3.1 Food Agent（`action: 'agent'`）
+
+```
+userText + memory(画像/近期日记/今日状态/常吃店铺/定位) + 可选图片
+        │
+        ▼  lib/runtime/orchestrator.js  runAgent()
+   System Prompt + 工具列表 → callAgent()  ─┐  最多 MAX_STEPS = 3 轮
+        ▲                                   │
+        └── dispatchTool(name,args,context) ◄┘  tool_calls → skills.js 注册表 → runner
+        │
+        ▼  无 tool_calls 时输出最终 reply
+{ ok, source: 'llm', data: { ...lastToolData, reply, trace } }
+```
+
+7 个工具（`lib/runtime/skills.js`）：`meal_recommend` / `meal_nutrition` / `meal_party` / `meal_recognize` / `meal_fridge` / `meal_ingredients` / `meal_memory`。
+重数据（profile、recentDiary…）由 orchestrator 注入 context，模型只传最小参数；`trace` 记录实际调用的工具，供评估使用。
+
+> 目前 Agent 工具**全是读/生成类**，没有写入类工具（记录一餐、增删冰箱食材），也没有确认流程。
 
 ### 4.4 响应 envelope
 
@@ -289,12 +331,19 @@ web/
 | Key | 内容 | 写入点 |
 | --- | --- | --- |
 | `meal_profile` | 长期画像 `{basic, prefer, onboarded}` | Basic/Prefer 页；Mine 页导入 |
-| `meal_diary` | 日记数组（倒序）`[{id, createdAt, meal, items[], imageSrc, deliveryStore, feedback, awaitingFeedback}]` | Confirm/Detail + Feedback |
+| `meal_diary` | 日记数组（倒序）`[{id, createdAt, date, meal, items[], imageSrc, deliveryStore, source, feedback, awaitingFeedback}]`；`date` 为 `YYYY-MM-DD` | Today / Confirm / Fridge / Detail + Feedback |
+| `meal_nutrition` | 今日营养建议缓存 | Today |
 | `meal_today_ctx` | 今日状态 `{hunger, mood, time, scene, crave, personalNote, savedAt}` | Today 页 |
 | `meal_last_reco` | 上次推荐 `{picks, refineHint, at}` | RecommendList |
 | `meal_pending` | 页面间临时数据（识别结果、当前卡片） | Today → Confirm、List → Detail |
 | `meal_location` | 定位 `{lat, lng, accuracy}`（30 分钟有效） | Today 授权定位 |
-| `meal_community_me` | 社区身份 `{code, name, emoji}` | Community |
+| `meal_fridge_inventory` | 冰箱食材清单 `[{id, name, category, quantity, unit, storageZone, addedDate, expiryDate, expirySource, ...}]` | Fridge 录入/扣减 |
+| `meal_community_me` | 社区身份 `{code, name, emoji}` | Partner |
+
+**约定（避免回归）：**
+- 所有 localStorage key 在 `store.js` 顶部声明并登记进 `ALL_KEYS`，`clearAll()` 只遍历它——新增 key 必须登记，否则「清空数据」会漏清。
+- 按天分组 / 计数的日期键一律用 `formatDateKey(ts)`（`YYYY-MM-DD`，补零），不要在页面里再手写 `getMonth()`。
+- 餐次推断一律用 `services/mealTime.js`：`guessMeal()`（日记餐次，14–17 点为「加餐」）/ `guessNextMeal()`（首页展示，同时段显示「下午加餐」）。
 
 ### 7.1 画像导出/导入格式
 
@@ -407,20 +456,36 @@ printf '%s' "deepseek-chat" | npx vercel env add LLM_TEXT_MODEL production
 
 ---
 
-## 十一、路线图
+## 十一、当前进度（对照 [v2.md](./v2.md)，更新于 2026-10-03）
 
-**已完成（本 repo）**
-- 首次注册流（品牌 + 基础 + 口味）
-- 三种年龄模式 + 过敏原/忌口自定义添加
-- 每日动态提问 + 个性化补充 + 今日营养建议卡
-- 拍照识别（菜品） + **冰箱识别（食材新鲜度 → 推荐菜）**
-- 外卖店铺跟踪 + 附近餐厅（Google Places）
+### 11.1 V2 五个阶段
+
+| 阶段 | 状态 | 说明 |
+| --- | --- | --- |
+| Phase 1 · IA 重构 | ✅ 基本完成 | 五 Tab（今日/冰箱/日记/饭搭子/我的）；首页两大入口（在家做 / 出去吃 + 记录这一餐）；Party/Community 合并为 Partner |
+| Phase 2 · 持久化冰箱 | ✅ 完成 | 三区库存、`shelfLife.js` 确定性新鲜度、拍/手动/告诉 Agent 录入、增删改；「用它做点什么」默认预选临期食材、排除已过期的（用户能否手动勾选过期食材未做硬限制） |
+| Phase 3 · 决策分支 | 🟡 部分 | 「用它做点什么」走 `ingredients` 单独生成；**尚未**拆出 `recommendHome / recommendEatingOut / recommendGroup` 三个独立推荐；冰箱食材的临期优先级未传入 `recommend` |
+| Phase 4 · 记录闭环 | 🟡 部分 | 在家做完成 → 写日记 + 扣减库存 ✅；拍照走 Confirm 确认 ✅；手动记录直接入日记，**无统一确认页**；**无「是否分享给好友」**一步 |
+| Phase 5 · Global Agent | 🟡 雏形 | 已有 `/agent` 页 + 7 个只读/生成类工具 + 15 条评估用例；**不是**全局悬浮层（仅今日页有入口）；**无写操作工具与确认流程**；无朋友画像/冰箱读取工具 |
+
+### 11.2 其他已完成
+- 首次注册流（品牌 + 基础 + 口味）；三种年龄模式；过敏原/忌口自定义
+- 今日状态（作为推荐 Context）+ 个性化补充 + 今日营养建议卡（带缓存）
+- 拍照识别（菜品）；冰箱识别 → 结构化食材（`fridgeItems`）
+- 外卖店铺跟踪 + 附近餐厅（Google Places）；出去吃推荐带定位
 - 三选一推荐 + 换一批（refineHint）+ 详情追问 + 饭后反馈
-- 饮食日记（本周概览 + 每餐记录）
-- 画像导出/导入（`MEAL1:`）
-- 聚餐 Agent（合并多人画像）
-- **社区**（邀请码好友 + 晒饭动态，Upstash Redis）
-- **LLM 供应商切换**（Anthropic → 智谱 BigModel，OpenAI 兼容）
+- 饮食日记（本周种类数 + 每日热量柱状图 + 每餐编辑/删除）
+- 画像导出/导入（`MEAL1:`）；聚餐方案；邀请码好友 + 晒饭动态（Upstash Redis）
+- LLM 供应商切换（OpenAI 兼容，默认智谱 BigModel）
+- Agent 评估框架（`eval/`，本地 + 线上两套执行器）
+- 架构 P0 修复：`clearAll()` 补漏 `meal_nutrition` 并以 `ALL_KEYS` 集中登记；日期键统一 `YYYY-MM-DD`；`guessMeal` 抽成共享模块
+
+### 11.3 已知缺口 / 下一步（按 v2.md 验收 Q1–Q7）
+- **Q4 朋友画像**：好友之间尚未共享 Food Profile（过敏/忌口/菜系…），也没有「临时添加一起吃的人」→ 聚餐仍靠粘贴 `MEAL1:` 文本合并画像
+- **Q6 Agent 全能**：需要写入类工具（`addMealLog` / `addFridgeItem` / `removeFridgeItem`）+ 写前确认；需要读取冰箱 / 好友画像 / 附近餐厅的工具
+- **Q5 记录一次即三用**：补统一 Meal Confirmation + 可选分享到 Feed
+- **Safety Hard Filter**：过敏/忌口/过期食材目前主要靠 System Prompt 约束，v2.md 要求在代码层二次硬过滤（尤其聚餐）
+- 架构审计里的 P1/P2 项（组件拆分、统一状态层等）**尚未处理**，本轮只做了 P0
 
 **未做，但预留了接入点**
 - 菜品知识库（System Prompt 加"从库中选菜"约束即可）
@@ -440,7 +505,20 @@ npm i -g vercel
 vercel dev               # 同时起前端 + /api，需要本地 .env.local
 ```
 
-生产构建：`npm run build` → 输出到 `dist/`。
+生产构建：`npm run build` → 输出到 `dist/`。目前没有前端单元测试，构建通过 + 下面的 Agent 评估是仅有的自动检查。
+
+### Agent 评估（`eval/`）
+
+```bash
+# 线上（推荐：线上才有真实 LLM_API_KEY；Vercel 上该 Key 是只写的，本地读不到）
+node eval/run-http.mjs --base https://xxx.vercel.app
+node eval/run-http.mjs --base https://xxx.vercel.app --only c14   # 只跑一条
+
+# 本地（需要 .env.local 里有可用的 LLM_API_KEY）
+node --env-file=.env.local eval/run.mjs
+```
+
+判定规则：`expected` 里的工具没出现 → ❌；`forbidden` 里的工具出现 → ❌；调用了额外工具 → ⚠️；`source=mock` → ❌ INFRA（Key 没生效，评测无效）；`checkAllergen`（如 c14 的「花生」）出现在回复里 → 🚫 过敏安全失败。
 
 ---
 
@@ -459,4 +537,4 @@ vercel dev               # 同时起前端 + /api，需要本地 .env.local
 
 ---
 
-_如果你是被交接进这个项目的下一位工程师或者一个刚被换上来的 AI Agent：先看这个 README，再看 `api/agent.js`（后端逻辑全在这一个文件里），最后看 `views/RecommendList.vue` + `views/Today.vue`（前端主线两页）。理解这三处就能开始改。_
+_如果你是被交接进这个项目的下一位工程师或者一个刚被换上来的 AI Agent：先看这个 README 和 `v2.md`（产品目标），再看 `api/agent.js`（action 分发）→ `lib/runtime/orchestrator.js` + `skills.js`（Agent 大脑与工具）→ `lib/runtime/runners.js`（各能力实现），最后看 `src/views/Today.vue` + `Fridge.vue`（前端主线两页）和 `src/services/store.js`（本地数据）。理解这几处就能开始改。_

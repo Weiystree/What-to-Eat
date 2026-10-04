@@ -66,6 +66,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as agent from '../services/agent.js'
 import { getPending, getProfile, getTodayContext, appendDiary } from '../services/store.js'
+import { guessMeal } from '../services/mealTime.js'
 
 const router = useRouter()
 const pick = ref({ allergens: [], swaps: [] })
@@ -103,15 +104,6 @@ async function quickAsk(q) {
   } else {
     replyData.value = { reply: String(d) }
   }
-}
-
-function guessMeal() {
-  const h = new Date().getHours()
-  if (h < 10) return '早餐'
-  if (h < 14) return '午餐'
-  if (h < 17) return '加餐'
-  if (h < 21) return '晚餐'
-  return '夜宵'
 }
 
 async function onPick() {

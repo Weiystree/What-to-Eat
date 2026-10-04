@@ -27,7 +27,7 @@ function goHome() {
 }
 
 // 一级 Tab 之间使用横向切换感（fade + 微位移）；进入详情页略微上浮
-const TAB_PATHS = ['/today', '/diary', '/party', '/community', '/mine']
+const TAB_PATHS = ['/today', '/fridge', '/diary', '/partner', '/mine']
 const transitionName = ref('page-fade')
 
 watch(() => route.path, (to, from) => {

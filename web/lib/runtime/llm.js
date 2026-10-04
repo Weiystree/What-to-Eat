@@ -158,6 +158,13 @@ const MOCK = {
         howto: '鸡蛋加面粉调糊摊饼，西兰花快炒，搭配食用'
       }
     ]
+  },
+  fridgeItems: {
+    items: [
+      { name: '鸡蛋', category: 'egg', quantity: 6, unit: '个', storageZone: 'fridge', freshness: '新鲜' },
+      { name: '西兰花', category: 'veg', quantity: 1, unit: '颗', storageZone: 'fridge', freshness: '需尽快用' },
+      { name: '鸡胸肉', category: 'meat', quantity: 300, unit: 'g', storageZone: 'zero_zone', freshness: '一般' }
+    ]
   }
 }
 
@@ -350,6 +357,31 @@ const SCHEMAS = {
       },
       required: ['dishes']
     }
+  },
+  fridgeItems: {
+    name: 'submit_fridge_items',
+    description: '提交从照片或描述中识别到的食材清单（逐个列出：名称/分类/数量/单位/存放区/新鲜度）',
+    input_schema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: '食材名称，尽量具体到品种' },
+              category: { type: 'string', enum: ['staple', 'veg', 'fruit', 'meat', 'seafood', 'egg', 'bean', 'dairy', 'other'] },
+              quantity: { type: 'number' },
+              unit: { type: 'string', enum: ['g', 'kg', '个', '盒', '颗', '份', '把', '袋'] },
+              storageZone: { type: 'string', enum: ['fridge', 'zero_zone', 'freezer'] },
+              freshness: { type: 'string', enum: ['新鲜', '一般', '需尽快用'] }
+            },
+            required: ['name', 'category']
+          }
+        }
+      },
+      required: ['items']
+    }
   }
 }
 
@@ -361,7 +393,8 @@ const MAX_TOKENS = {
   party:         900,
   chat:           400,
   fridgeToRecipe: 800,
-  ingredients:    800
+  ingredients:    800,
+  fridgeItems:    800
 }
 
 async function callLLM(userJson, schemaKey, opts) {

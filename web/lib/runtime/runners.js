@@ -171,6 +171,29 @@ export async function runFridgeToRecipe(payload) {
   return { ok: true, source: 'mock', data: MOCK.fridgeToRecipe }
 }
 
+// 冰箱食材录入：照片或文字 → 结构化食材清单（name/category/quantity/unit/storageZone/freshness）。
+// 只出食材清单，不出菜谱（菜谱走 runIngredients）。供 Fridge.vue「拍冰箱 / 告诉 Agent」录入。
+export async function runFridgeItems(payload) {
+  const { imageDataUrl, textDescription, ...ctx } = payload || {}
+  if (!imageDataUrl && !textDescription) {
+    return { ok: true, source: 'mock', data: MOCK.fridgeItems }
+  }
+  try {
+    const task = imageDataUrl
+      ? '识别照片中可见的食材，逐个列出：名称（尽量具体到品种）、分类 category、大约数量 quantity、单位 unit、适合的存放区 storageZone（fridge 冷藏 / zero_zone 零度保鲜 / freezer 冷冻）、新鲜度 freshness（新鲜/一般/需尽快用）。不要输出可信度、不要提问，不确定的项宁可少列。'
+      : `根据这段描述结构化食材清单，逐个列出：名称（尽量具体到品种）、分类 category、大约数量 quantity、单位 unit、适合的存放区 storageZone（fridge/zero_zone/freezer）、新鲜度 freshness。描述：${textDescription}`
+    const data = await callLLM(
+      Object.assign({ task }, ctx),
+      'fridgeItems',
+      imageDataUrl ? { imageDataUrl, temperature: 0.4 } : {}
+    )
+    if (data && Array.isArray(data.items) && data.items.length) {
+      return { ok: true, source: 'llm', data }
+    }
+  } catch (e) { console.error('fridgeItems llm error:', e.message) }
+  return { ok: true, source: 'mock', data: MOCK.fridgeItems }
+}
+
 export async function runChat(payload) {
   try {
     const data = await callLLM(payload || {}, 'chat')

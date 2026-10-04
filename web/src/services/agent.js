@@ -85,6 +85,29 @@ function localMock(action, payload) {
       }
     }
   }
+  if (action === 'fridgeItems') {
+    return {
+      ok: true, source: 'local-mock',
+      data: {
+        items: [
+          { name: '鸡蛋', category: 'egg', quantity: 6, unit: '个', storageZone: 'fridge', freshness: '新鲜' },
+          { name: '西兰花', category: 'veg', quantity: 1, unit: '颗', storageZone: 'fridge', freshness: '需尽快用' },
+          { name: '鸡胸肉', category: 'meat', quantity: 300, unit: 'g', storageZone: 'zero_zone', freshness: '一般' }
+        ]
+      }
+    }
+  }
+  if (action === 'ingredients') {
+    return {
+      ok: true, source: 'local-mock',
+      data: {
+        dishes: [
+          { name: '西兰花鸡蛋面', reason: '鸡蛋+西兰花+面条一锅出，主食蛋白蔬菜一次配齐', uses: ['鸡蛋', '西兰花', '面条'], missing: ['蒜'], time: '15 分钟', difficulty: '简单', howto: '水开下面条，快熟时下西兰花焯一下，另起锅炒鸡蛋，捞出拌匀加盐调味' },
+          { name: '蒜蓉西兰花 + 荷包蛋面', reason: '西兰花清炒配荷包蛋，简单营养又清爽', uses: ['鸡蛋', '西兰花', '面条'], missing: ['蒜'], time: '15 分钟', difficulty: '简单', howto: '面条煮熟，西兰花蒜蓉快炒，另煎荷包蛋，摆盘即可' }
+        ]
+      }
+    }
+  }
   if (action === 'communityRegister') {
     return { ok: true, source: 'local-mock', data: { me: { code: 'ME0001', name: (payload && payload.name) || '我', emoji: (payload && payload.emoji) || '😊' } } }
   }
@@ -113,6 +136,8 @@ export const chat = (payload) => invoke('chat', payload)
 export const dailyNutrition = (payload) => invoke('dailyNutrition', payload)
 export const party = (payload) => invoke('party', payload)
 export const fridgeToRecipe = (payload) => invoke('fridgeToRecipe', payload)
+export const fridgeItems = (payload) => invoke('fridgeItems', payload)
+export const ingredients = (payload) => invoke('ingredients', payload)
 export const communityRegister = (payload) => invoke('communityRegister', payload)
 export const communityAddFriend = (payload) => invoke('communityAddFriend', payload)
 export const communityFriends = (payload) => invoke('communityFriends', payload)

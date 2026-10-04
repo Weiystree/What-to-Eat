@@ -51,6 +51,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getPending, setPending, appendDiary } from '../services/store.js'
+import { guessMeal } from '../services/mealTime.js'
 
 const router = useRouter()
 const candidates = ref([])           // Agent 识别出来的原始候选
@@ -61,15 +62,6 @@ const meal = ref('午餐')
 const deliveryStore = ref('')
 
 const mealOptions = ['早餐', '午餐', '加餐', '晚餐', '夜宵']
-
-function guessMeal() {
-  const h = new Date().getHours()
-  if (h < 10) return '早餐'
-  if (h < 14) return '午餐'
-  if (h < 17) return '加餐'
-  if (h < 21) return '晚餐'
-  return '夜宵'
-}
 
 onMounted(() => {
   const p = getPending('recognize') || {}

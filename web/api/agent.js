@@ -8,7 +8,8 @@
 //   均只在 Vercel 环境变量配置，绝不硬编码。
 
 import {
-  runRecognizeMeal, runRecommend, runDailyNutrition, runParty, runFridgeToRecipe, runChat
+  runRecognizeMeal, runRecommend, runDailyNutrition, runParty, runFridgeToRecipe, runChat,
+  runFridgeItems, runIngredients
 } from '../lib/runtime/runners.js'
 import { runAgent } from '../lib/runtime/orchestrator.js'
 
@@ -18,6 +19,8 @@ const RUNNERS = {
   dailyNutrition: runDailyNutrition,
   party: runParty,
   fridgeToRecipe: runFridgeToRecipe,
+  fridgeItems: runFridgeItems,
+  ingredients: runIngredients,
   chat: runChat
 }
 

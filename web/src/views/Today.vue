@@ -6,25 +6,15 @@
       <div class="status-line">{{ modeLabel }} · 下一餐：{{ nextMeal }} · 今天已记录 {{ diaryToday }} 餐</div>
     </div>
 
-    <!-- 场景入口 -->
+    <!-- 下一餐，想怎么吃？ -->
     <div class="card">
-      <!-- 随手拍 - 大按钮 -->
-      <div class="snap-btn" @click="onSnap">
-        <div class="snap-icon">📷</div>
-        <div class="snap-label">随手拍</div>
-        <div class="snap-desc">拍照识别吃了什么</div>
-      </div>
-      <input ref="snapInput" type="file" accept="image/*" hidden @change="onSnapPhoto" />
-
-      <!-- 两个半宽按钮 -->
+      <div class="intent-title">下一餐，想怎么吃？</div>
       <div class="dual-row">
         <div class="dual-btn" @click="onHomeCook">
           <div class="dual-icon">🏠</div>
           <div class="dual-label">在家做</div>
-          <div class="dual-desc">拍冰箱 · 推荐菜</div>
+          <div class="dual-desc">看冰箱 · 用它做点什么</div>
         </div>
-        <input ref="fridgeInput" type="file" accept="image/*" hidden @change="onFridgePhoto" />
-
         <div class="dual-btn" @click="onSceneOut">
           <div class="dual-icon">🍽️</div>
           <div class="dual-label">出去吃</div>
@@ -34,14 +24,34 @@
           </div>
         </div>
       </div>
-
-      <!-- 状态提示 -->
-      <div v-if="capturing" class="inline-status">
-        {{ snapMode === 'meal' ? '📷 识别菜品中…' : '🥬 识别冰箱食材中…' }}
-      </div>
       <div v-if="showLocHint" class="loc-hint" @click="refreshLocation">
         {{ locating ? '📍 定位中…' : '📍 开启定位，推荐附近好评餐厅 →' }}
       </div>
+    </div>
+
+    <!-- 记录这一餐 -->
+    <div class="card">
+      <div class="intent-title">记录这一餐</div>
+      <div class="snap-btn" @click="onSnap">
+        <div class="snap-icon">📷</div>
+        <div class="snap-label">拍照记录</div>
+        <div class="snap-desc">拍照识别吃了什么</div>
+      </div>
+      <input ref="snapInput" type="file" accept="image/*" hidden @change="onSnapPhoto" />
+
+      <div class="dual-row">
+        <div class="dual-btn" @click="showManualEntry = true">
+          <div class="dual-icon">✏️</div>
+          <div class="dual-label">手动记录</div>
+          <div class="dual-desc">输入文字估算</div>
+        </div>
+        <div class="dual-btn" @click="goAgent">
+          <div class="dual-icon">✨</div>
+          <div class="dual-label">告诉 Agent</div>
+          <div class="dual-desc">自然语言描述</div>
+        </div>
+      </div>
+      <div v-if="capturing" class="inline-status">📷 识别菜品中…</div>
     </div>
 
     <!-- 偏好设置（可折叠） -->
@@ -151,54 +161,6 @@
       <p class="reminder">{{ reminder }}</p>
     </div>
 
-    <!-- 在家做结果弹层 -->
-    <div v-if="showFridgeResult" class="mask" @click.self="showFridgeResult = false">
-      <div class="sheet fridge-sheet">
-        <div class="sheet-head">
-          <span>冰箱里的发现</span>
-          <button class="close" @click="showFridgeResult = false">×</button>
-        </div>
-
-        <!-- 识别到的食材 -->
-        <div class="fridge-section">
-          <div class="fridge-section-title">🥬 识别到的食材</div>
-          <div class="fridge-tags">
-            <span v-for="ing in fridgeResult.ingredients" :key="ing.name"
-                  class="fridge-tag" :class="freshClass(ing.freshness)">
-              {{ ing.name }}<span class="fresh-dot">{{ freshDot(ing.freshness) }}</span>
-            </span>
-          </div>
-        </div>
-
-        <!-- 推荐菜品 -->
-        <div class="fridge-section">
-          <div class="fridge-section-title">🍳 推荐菜品</div>
-          <div v-for="(d, i) in fridgeResult.dishes" :key="i" class="dish-card">
-            <div class="dish-name">{{ d.name }}</div>
-            <div class="dish-reason">{{ d.reason }}</div>
-            <div class="dish-meta">
-              <span class="dish-meta-item">⏱ {{ d.time }}</span>
-              <span class="dish-meta-item" v-if="d.difficulty">{{ d.difficulty }}</span>
-            </div>
-            <div class="dish-ingredients">
-              <span class="dish-use-label">用到的：</span>
-              <span v-for="u in d.uses" :key="u" class="dish-use-tag">{{ u }}</span>
-              <span v-if="d.missing && d.missing.length" class="dish-miss-label">还缺：</span>
-              <span v-for="m in d.missing" :key="m" class="dish-miss-tag">{{ m }}</span>
-            </div>
-            <div v-if="d.howto" class="dish-howto">{{ d.howto }}</div>
-            <div class="dish-actions">
-              <a class="dish-bili-link"
-                 :href="biliSearchUrl(d.name)"
-                 target="_blank" rel="noopener noreferrer">📺 B站教程 →</a>
-            </div>
-          </div>
-        </div>
-
-        <div class="fridge-saved-note">🥬 识别到的食材已保存到本机冰箱清单</div>
-      </div>
-    </div>
-
     <!-- 手动记录弹层 -->
     <div v-if="showManualEntry" class="mask" @click.self="showManualEntry = false">
       <div class="sheet">
@@ -225,9 +187,10 @@ import {
   deriveAgeMode, setPending, getDeliveryStores,
   getSavedLocation, requestGeolocation, appendDiary,
   getCachedNutrition, setCachedNutrition,
-  setFridgeInventory
+  getExpiringFoods, formatDateKey
 } from '../services/store.js'
-import { recognizeMeal, dailyNutrition, estimateMeal, fridgeToRecipe } from '../services/agent.js'
+import { recognizeMeal, dailyNutrition, estimateMeal } from '../services/agent.js'
+import { guessMeal, guessNextMeal } from '../services/mealTime.js'
 
 const router = useRouter()
 const ctx = reactive({
@@ -245,11 +208,6 @@ const reminder = ref('')
 const capturing = ref(false)
 const estimatingManual = ref(false)
 const showPrefs = ref(false)
-const snapMode = ref('meal') // 'meal' | 'fridge'
-
-// 冰箱识别结果
-const showFridgeResult = ref(false)
-const fridgeResult = ref({ ingredients: [], dishes: [] })
 
 const nutrition = ref(null)
 const nutritionLoading = ref(false)
@@ -261,7 +219,6 @@ const budgetMin = ref('')
 const budgetMax = ref('')
 const budgetOptions = ['≤ 20 元', '20~40 元', '40~80 元', '≥ 80 元']
 const snapInput = ref(null)
-const fridgeInput = ref(null)
 
 const showLocHint = computed(() => ctx.scene === '餐厅' && !location.value)
 
@@ -354,9 +311,8 @@ const craveOptions = [
 
 // —— 场景动作 ——
 
-// 随手拍：拍照识别吃了什么 → 跳 Confirm 页
+// 拍照记录：拍照识别吃了什么 → 跳 Confirm 页
 function onSnap() {
-  snapMode.value = 'meal'
   const el = snapInput.value
   if (el) el.click()
 }
@@ -382,36 +338,9 @@ function onSnapPhoto(e) {
   })
 }
 
-// 在家做：拍照识别冰箱食材 → 推荐菜品
+// 在家做：直接进冰箱页（查看/录入食材 + 用它做点什么）
 function onHomeCook() {
-  snapMode.value = 'fridge'
-  ctx.scene = '在家做'
-  saveCtx()
-  const el = fridgeInput.value
-  if (el) el.click()
-}
-
-async function onFridgePhoto(e) {
-  const file = e.target.files && e.target.files[0]
-  e.target.value = ''
-  if (!file) return
-  capturing.value = true
-  try {
-    const dataUrl = await compressToDataUrl(file)
-    const r = await fridgeToRecipe({
-      imageDataUrl: dataUrl,
-      profile: getProfile()
-    })
-    capturing.value = false
-    if (r && r.ok && r.data) {
-      fridgeResult.value = r.data
-      setFridgeInventory(r.data.ingredients || [])
-      showFridgeResult.value = true
-    }
-  } catch (err) {
-    capturing.value = false
-    alert('图片读取失败，请重试')
-  }
+  router.push('/fridge')
 }
 
 // 出去吃：跳推荐页
@@ -435,24 +364,12 @@ function timeGreeting() {
   if (h < 21) return '晚上好'
   return '晚安'
 }
-function nextMealGuess() {
-  const h = new Date().getHours()
-  if (h < 10) return '早餐'
-  if (h < 14) return '午餐'
-  if (h < 17) return '下午加餐'
-  if (h < 21) return '晚餐'
-  return '夜宵'
-}
 function modeText(m) { return ({ growth: '成长模式', adult: '成人模式', senior: '活力模式' })[m] || '成人模式' }
 
 onMounted(() => {
   const diary = getDiary()
-  const today = new Date()
-  const key = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`
-  diaryToday.value = diary.filter(d => {
-    const t = new Date(d.createdAt)
-    return `${t.getFullYear()}-${t.getMonth()}-${t.getDate()}` === key
-  }).length
+  const key = formatDateKey(new Date())
+  diaryToday.value = diary.filter(d => formatDateKey(d.createdAt) === key).length
 
   const saved = getTodayContext() || {}
   Object.assign(ctx, saved)
@@ -464,17 +381,24 @@ onMounted(() => {
   if (!ctx.budget && !budgetMode.value) ctx.budget = '20~40 元'
 
   greeting.value = timeGreeting()
-  nextMeal.value = nextMealGuess()
+  nextMeal.value = guessNextMeal()
   modeLabel.value = modeText(deriveAgeMode(getProfile()))
 
-  if (diary.length === 0) {
+  const expiring = getExpiringFoods()
+  const urgentCount = expiring.filter(f => f.status === 'urgent' || f.status === 'expired').length
+  const recent = diary.slice(0, 2)
+  const hasVeg = recent.some(d => (d.items || []).some(i => /菜|菠菜|青菜|西兰花|蔬菜|沙拉/.test(i.name || '')))
+
+  if (urgentCount > 0) {
+    reminder.value = `冰箱里有 ${urgentCount} 种食材快过期了，去「冰箱」优先吃掉或做一顿。`
+  } else if (expiring.length > 0) {
+    reminder.value = `冰箱里有 ${expiring.length} 种食材建议尽快用，点「在家做」看看能做什么。`
+  } else if (diary.length === 0) {
     reminder.value = '记录一顿餐食，Agent 会根据你的最近饮食给出更贴合的推荐。'
+  } else if (!hasVeg) {
+    reminder.value = '最近两餐蔬菜较少，下一餐可以优先补充一种深色蔬菜。'
   } else {
-    const recent = diary.slice(0, 2)
-    const hasVeg = recent.some(d => (d.items || []).some(i => /菜|菠菜|青菜|西兰花|蔬菜|沙拉/.test(i.name || '')))
-    reminder.value = hasVeg
-      ? '最近饮食结构还不错，保持食物多样性即可。'
-      : '最近两餐蔬菜较少，下一餐可以优先补充一种深色蔬菜。'
+    reminder.value = '冰箱和饮食结构都还不错，保持多样性即可。'
   }
 
   const cached = getCachedNutrition()
@@ -525,15 +449,6 @@ async function saveManualEntry() {
   manualText.value = ''
   showManualEntry.value = false
 }
-function guessMeal() {
-  const h = new Date().getHours()
-  if (h < 10) return '早餐'
-  if (h < 14) return '午餐'
-  if (h < 17) return '加餐'
-  if (h < 21) return '晚餐'
-  return '夜宵'
-}
-
 async function loadNutrition() {
   nutritionLoading.value = true
   const r = await dailyNutrition({
@@ -584,6 +499,10 @@ function compressToDataUrl(file) {
   font-size: 12px; font-weight: 400; color: #a89684;
   letter-spacing: 0.08em; text-transform: uppercase;
   margin-bottom: 16px;
+}
+.intent-title {
+  font-size: 16px; font-weight: 500; color: #2a1e17;
+  letter-spacing: -0.01em; margin-bottom: 14px;
 }
 
 /* ===== 随手拍大按钮 ===== */

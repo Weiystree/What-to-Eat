@@ -1,4 +1,6 @@
 // localStorage 封装：画像、日记、今日状态、上次推荐
+import { normalizeItem, computeFreshness } from './shelfLife.js'
+
 const K_PROFILE = 'meal_profile'
 const K_DIARY = 'meal_diary'
 const K_TODAY = 'meal_today_ctx'
@@ -6,6 +8,14 @@ const K_LAST_RECO = 'meal_last_reco'
 const K_PENDING = 'meal_pending'  // 页面间临时数据（识别结果、当前选中的推荐卡）
 const K_COMMUNITY = 'meal_community_me'  // 我的社区身份 {code,name,emoji}
 const K_FRIDGE = 'meal_fridge_inventory'  // 冰箱食材清单 [{name,freshness}]
+const K_NUTRITION = 'meal_nutrition'  // 今日营养建议缓存
+const K_LOCATION = 'meal_location'  // 地理位置（用于附近餐厅推荐）
+
+// 所有 localStorage key 的单一登记处：新增 key 必须在此登记，clearAll 才会一并清理。
+const ALL_KEYS = [
+  K_PROFILE, K_DIARY, K_TODAY, K_LAST_RECO, K_PENDING,
+  K_COMMUNITY, K_FRIDGE, K_NUTRITION, K_LOCATION
+]
 
 function readJSON(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback } catch (e) { return fallback }
@@ -18,11 +28,16 @@ export function getProfile() { return readJSON(K_PROFILE, null) }
 export function setProfile(p) { writeJSON(K_PROFILE, p) }
 
 export function getDiary() { return readJSON(K_DIARY, []) }
+// 统一日期键 YYYY-MM-DD（月/日补零）。所有按天分组/计数的 key 都用它，避免各页各自生成。
+export function formatDateKey(ts) {
+  const d = ts instanceof Date ? ts : new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 export function appendDiary(entry) {
   const list = getDiary()
   const now = Date.now()
-  const d = new Date(now)
-  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const date = formatDateKey(now)
   list.unshift(Object.assign({ id: now, createdAt: now, date }, entry))
   writeJSON(K_DIARY, list)
   return list
@@ -44,14 +59,48 @@ export function setTodayContext(ctx) { writeJSON(K_TODAY, Object.assign({ savedA
 export function getLastReco() { return readJSON(K_LAST_RECO, null) }
 export function setLastReco(r) { writeJSON(K_LAST_RECO, r) }
 
-const K_NUTRITION = 'meal_nutrition'
 export function getCachedNutrition() { return readJSON(K_NUTRITION, null) }
 export function setCachedNutrition(n) { writeJSON(K_NUTRITION, n) }
 
 // —— 冰箱食材清单 ——
-export function getFridgeInventory() { return readJSON(K_FRIDGE, []) }
+export function getFridgeInventory() {
+  const list = readJSON(K_FRIDGE, [])
+  if (!Array.isArray(list)) return []
+  // 旧数据迁移：早期只存 [{name,freshness}]，补全为完整 FoodItem 并回写一次
+  if (list.some(it => !it || !it.id)) {
+    const migrated = list.map(it => normalizeItem(it))
+    writeJSON(K_FRIDGE, migrated)
+    return migrated
+  }
+  return list
+}
 export function setFridgeInventory(list) { writeJSON(K_FRIDGE, Array.isArray(list) ? list : []) }
 export function clearFridgeInventory() { localStorage.removeItem(K_FRIDGE) }
+
+export function addFridgeItem(item) {
+  const list = getFridgeInventory()
+  list.push(normalizeItem(item))
+  setFridgeInventory(list)
+  return list
+}
+export function updateFridgeItem(id, patch) {
+  const list = getFridgeInventory().map(x => x.id === id ? Object.assign({}, x, patch, { updatedAt: Date.now() }) : x)
+  setFridgeInventory(list)
+  return list
+}
+export function removeFridgeItem(id) {
+  const list = getFridgeInventory().filter(x => x.id !== id)
+  setFridgeInventory(list)
+  return list
+}
+// 临期/已过期食材（urgent / use_soon / expired），按剩余天数升序
+export function getExpiringFoods() {
+  const now = Date.now()
+  return getFridgeInventory()
+    .map(it => Object.assign({}, it, computeFreshness(it, now)))
+    .filter(it => it.status === 'urgent' || it.status === 'use_soon' || it.status === 'expired')
+    .sort((a, b) => a.daysLeft - b.daysLeft)
+}
 
 // —— 社区身份 ——
 export function getCommunityMe() { return readJSON(K_COMMUNITY, null) }
@@ -68,11 +117,10 @@ export function setPending(key, val) {
 }
 
 export function clearAll() {
-  [K_PROFILE, K_DIARY, K_TODAY, K_LAST_RECO, K_PENDING, K_LOCATION, K_COMMUNITY, K_FRIDGE].forEach(k => localStorage.removeItem(k))
+  ALL_KEYS.forEach(k => localStorage.removeItem(k))
 }
 
 // —— 地理位置（用于附近餐厅推荐） ——
-const K_LOCATION = 'meal_location'
 const LOCATION_MAX_AGE_MS = 30 * 60 * 1000 // 30 分钟
 
 export function getSavedLocation() {

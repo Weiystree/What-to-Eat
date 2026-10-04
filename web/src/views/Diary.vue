@@ -125,7 +125,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import {
   getDiary, updateDiary, deleteDiary, getProfile,
   getCategoryMeta, mergeFoodEstimates, summarizeFoodKinds,
-  getWeeklyFoodStats, getWeeklyCalories
+  getWeeklyFoodStats, getWeeklyCalories, formatDateKey
 } from '../services/store.js'
 import { estimateMeal } from '../services/agent.js'
 
@@ -154,8 +154,7 @@ function entryCalories(items) {
 function groupByDay(list) {
   const map = {}
   list.forEach(x => {
-    const d = new Date(x.createdAt)
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`
+    const key = formatDateKey(x.createdAt)
     if (!map[key]) map[key] = { day: key, entries: [] }
     map[key].entries.push({ ...x, timeLabel: fmtTime(x.createdAt), totalCalories: entryCalories(x.items) })
   })
