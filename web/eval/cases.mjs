@@ -48,7 +48,14 @@ export const BASE_MEMORY = {
   recentStores: [
     { name: '老王盖饭', count: 3, dishes: ['宫保鸡丁', '鱼香肉丝', '番茄炒蛋'] }
   ],
-  location: { lat: 39.9042, lng: 116.4074, label: '家' }
+  location: { lat: 39.9042, lng: 116.4074, label: '家' },
+  // 客户端 getFridgeSnapshot() 的形状：新鲜度已在本地算好
+  fridge: [
+    { id: 'f1', name: '鸡胸肉', quantity: 300, unit: 'g', storageZone: 'zero_zone', status: 'urgent', daysLeft: 0 },
+    { id: 'f2', name: '西兰花', quantity: 1, unit: '颗', storageZone: 'fridge', status: 'use_soon', daysLeft: 2 },
+    { id: 'f3', name: '鸡蛋', quantity: 6, unit: '个', storageZone: 'fridge', status: 'fresh', daysLeft: 20 },
+    { id: 'f4', name: '牛奶', quantity: 1, unit: '盒', storageZone: 'fridge', status: 'expired', daysLeft: -2 }
+  ]
 }
 
 export const CASES = [
@@ -168,6 +175,22 @@ export const CASES = [
     expected: ['meal_recommend'],
     forbidden: ['meal_party', 'meal_recognize', 'meal_fridge'],
     checkAllergen: ['花生']
+  },
+  {
+    id: 'c16',
+    category: '冰箱·临期查询',
+    input: '我冰箱里有什么快过期了？',
+    problem: '想知道哪些已保存的食材要尽快吃，应读冰箱清单而不是识别照片',
+    expected: ['meal_expiring_foods'],
+    forbidden: ['meal_fridge', 'meal_recognize', 'meal_party']
+  },
+  {
+    id: 'c17',
+    category: '冰箱·库存查询',
+    input: '我冰箱里现在还有鸡蛋吗？',
+    problem: '查已保存清单里有没有某样食材，应读冰箱清单',
+    expected: ['meal_fridge_inventory'],
+    forbidden: ['meal_fridge', 'meal_recognize', 'meal_party']
   },
   {
     id: 'c15',

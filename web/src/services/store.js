@@ -93,6 +93,17 @@ export function removeFridgeItem(id) {
   setFridgeInventory(list)
   return list
 }
+// 给 Agent 用的冰箱精简快照：只保留必要字段，新鲜度在本地用确定性规则算好（服务端不重算）
+export function getFridgeSnapshot() {
+  const now = Date.now()
+  return getFridgeInventory().map(it => {
+    const f = computeFreshness(it, now)
+    return {
+      id: it.id, name: it.name, quantity: it.quantity, unit: it.unit,
+      storageZone: it.storageZone, status: f.status, daysLeft: f.daysLeft
+    }
+  })
+}
 // 临期/已过期食材（urgent / use_soon / expired），按剩余天数升序
 export function getExpiringFoods() {
   const now = Date.now()

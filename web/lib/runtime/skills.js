@@ -5,6 +5,7 @@ import {
   runRecommend, runDailyNutrition, runParty, runRecognizeMeal, runFridgeToRecipe,
   runIngredients, runMealMemory
 } from './runners.js'
+import { runFridgeInventory, runExpiringFoods } from './fridgeTools.js'
 
 // 每个 skill 的 tool 输入（最小参数；重数据如 profile/recentDiary 由 orchestrator 注入 memory）
 const AGENT_TOOL_INPUTS = {
@@ -53,7 +54,9 @@ const AGENT_TOOL_INPUTS = {
       query: { type: 'string', description: '用户问的日期/餐次，如"昨天中午""今天晚餐"' }
     },
     required: ['query']
-  }
+  },
+  meal_fridge_inventory: { type: 'object', properties: {} },
+  meal_expiring_foods: { type: 'object', properties: {} }
 }
 
 const SKILL_REGISTRY = [
@@ -98,6 +101,18 @@ const SKILL_REGISTRY = [
     description: '按日期/餐次查询用户的历史餐食记录。当用户问"昨天/前天某餐吃了什么"时调用（不要凭记忆猜）。',
     input: AGENT_TOOL_INPUTS.meal_memory,
     runner: runMealMemory
+  },
+  {
+    name: 'meal_fridge_inventory',
+    description: '读取用户冰箱里当前所有食材（名称/数量/存放区/新鲜度）。当用户问"冰箱里有什么/还有没有X/能不能吃X"时调用。这是读已保存的清单，不是识别照片。',
+    input: AGENT_TOOL_INPUTS.meal_fridge_inventory,
+    runner: runFridgeInventory
+  },
+  {
+    name: 'meal_expiring_foods',
+    description: '读取冰箱里临期或已过期的食材，按最急排序。当用户问"什么快过期/哪些要尽快吃"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_expiring_foods,
+    runner: runExpiringFoods
   }
 ]
 

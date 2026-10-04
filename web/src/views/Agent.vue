@@ -67,7 +67,7 @@ import { ref, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getProfile, getDiary, getTodayContext, getDeliveryStores,
-  getSavedLocation, deriveAgeMode
+  getSavedLocation, deriveAgeMode, getFridgeSnapshot
 } from '../services/store.js'
 import { agent } from '../services/agent.js'
 
@@ -93,7 +93,8 @@ function buildMemory() {
     recentDiary: getDiary().slice(0, 10),
     todayContext: getTodayContext(),
     recentStores: getDeliveryStores(5),
-    location: getSavedLocation()
+    location: getSavedLocation(),
+    fridge: getFridgeSnapshot()
   }
 }
 
