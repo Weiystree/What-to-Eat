@@ -16,6 +16,9 @@ const AGENT_SYSTEM_PROMPT = `你是 NextMeal 的饮食决策助手。用户用�
 - meal_memory：按日期/餐次查询历史餐食记录。当用户问"昨天/前天某餐吃了什么"时调用（不要凭 recentDiary 猜）。
 - meal_fridge_inventory：读取用户已保存的冰箱清单。当用户问"冰箱里有什么/还有没有X/能不能吃X"时调用。注意它读的是已保存清单，不是识别照片（识别照片用 meal_fridge）。
 - meal_expiring_foods：读取冰箱里临期/已过期食材。当用户问"什么快过期/哪些要尽快吃"时调用。
+- meal_add_meal_log：帮用户记录一顿已吃的饭。当用户说"帮我记一下我吃了X"时调用。
+- meal_add_fridge_item：帮用户把买回来的食材加进冰箱。当用户说"我买了X、Y，放冰箱里"时调用。
+- meal_remove_fridge_item：帮用户把某样食材从冰箱删除。当用户说"把X删了/X吃完了"时调用。
 
 决策规则：
 1. 只调用与当前问题相关的工具，不同问题走不同路径；绝不要每次把所有工具都调一遍。
@@ -25,6 +28,7 @@ const AGENT_SYSTEM_PROMPT = `你是 NextMeal 的饮食决策助手。用户用�
 5. 拿到工具结果后，用自然、简洁的中文向用户说明并给结论；结果里已有的结构化数据直接引用，不要重新编造菜名。
 6. 用户问历史某餐/某天吃了什么时，调用 meal_memory 查询，不要凭 recentDiary 里的条目直接猜日期；meal_memory 返回为空就如实说没查到。
 7. 用户问冰箱里有什么、哪些快过期时，调用 meal_fridge_inventory / meal_expiring_foods，不要自己从上下文里的 fridge 字段心算新鲜度；已过期的食材不要建议食用。工具返回为空就如实说冰箱里没有记录。
+8. 记录/加冰箱/删冰箱这三个写工具只会生成"待确认"的动作，用户在界面上点确认后才会真正写入。所以调用后必须说"我准备好了…，请确认"，绝不能说"已记录/已添加/已删除"。如果一句话包含多个动作，在同一步里一次性并行调用多个工具。工具返回 rejected 时，把原因转告用户并请他补充信息。
 
 最终回复：若需澄清，输出一句问题；否则给出简洁建议。可以纯文字，也可以引用工具返回的推荐卡。`
 
@@ -42,6 +46,14 @@ export async function runAgent(userText, memory, imageDataUrl) {
 
   const trace = []
   let lastData = null
+  // 写工具只"提议"：待用户确认的动作单独收集，不走 lastData 单槽位（否则多个动作会互相覆盖）
+  const pendingActions = []
+  // 无论从哪个出口返回（正常结束 / 步数耗尽 / LLM 出错），已收集的待确认动作都不能丢
+  const finish = (source, data) => ({
+    ok: true,
+    source,
+    data: pendingActions.length ? { ...data, pendingActions } : data
+  })
 
   for (let step = 0; step < MAX_STEPS; step++) {
     let msg
@@ -49,10 +61,10 @@ export async function runAgent(userText, memory, imageDataUrl) {
       msg = await callAgent(messages, tools)
     } catch (e) {
       console.error('[agent] callAgent error:', e.message)
-      return { ok: true, source: 'mock', data: { reply: '（暂时无法回答，请稍后再试）', trace } }
+      return finish('mock', { reply: '（暂时无法回答，请稍后再试）', trace })
     }
     if (!msg) {
-      return { ok: true, source: 'mock', data: { reply: '（Agent 未接入，请先配置 LLM_API_KEY）', trace } }
+      return finish('mock', { reply: '（Agent 未接入，请先配置 LLM_API_KEY）', trace })
     }
 
     const toolCalls = (msg.tool_calls || []).filter(t => t && t.function && t.function.name)
@@ -66,15 +78,18 @@ export async function runAgent(userText, memory, imageDataUrl) {
         trace.push(name)
         console.log('[agent] step=%d call=%s args=%s', step + 1, name, JSON.stringify(args))
         const result = await dispatchTool(name, args, context)
-        if (result && result.ok && result.data) lastData = result.data
-        messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) })
+        if (result && result.pending) pendingActions.push(result.pending)
+        else if (result && result.ok && result.data && result.source !== 'pending') lastData = result.data
+        // 回给模型的内容不带 pending 载荷，只带状态（pending_confirmation / rejected）
+        const { pending: _omit, ...forModel } = result || {}
+        messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(forModel) })
       }
       continue
     }
 
     const reply = (msg.content || '').trim() || '（未生成回答）'
-    return { ok: true, source: 'llm', data: { ...(lastData || {}), reply, trace } }
+    return finish('llm', { ...(lastData || {}), reply, trace })
   }
 
-  return { ok: true, source: 'llm', data: { ...(lastData || {}), reply: '（已达最大处理步数，请换个问法）', trace } }
+  return finish('llm', { ...(lastData || {}), reply: '（已达最大处理步数，请换个问法）', trace })
 }

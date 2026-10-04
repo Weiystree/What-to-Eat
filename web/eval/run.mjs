@@ -62,15 +62,20 @@ for (const c of CASES) {
   const hitForbidden = c.forbidden.filter(t => trace.includes(t))
   const extra = trace.filter(t => !c.expected.includes(t) && !c.forbidden.includes(t))
   const allergenHit = (c.checkAllergen || []).filter(a => reply.includes(a))
+  // 写工具只应"提议"：检查待确认动作是否产出、不该写时是否没写、模型回复是否谎称已完成
+  const pendingTypes = (Array.isArray(data.pendingActions) ? data.pendingActions : []).map(p => p.type)
+  const missingPending = !!c.expectPending && !pendingTypes.includes(c.expectPending)
+  const unexpectedPending = !!c.expectNoPending && pendingTypes.length > 0
+  const claimedDone = (c.forbidReplyPhrases || []).filter(p => reply.includes(p))
 
   let verdict
   if (source === 'mock') verdict = '❌ INFRA'
   else if (source === 'error') verdict = '❌ ERR'
-  else if (missing.length || hitForbidden.length) verdict = '❌'
-  else if (extra.length) verdict = '⚠️'
+  else if (missing.length || hitForbidden.length || missingPending || unexpectedPending) verdict = '❌'
+  else if (extra.length || claimedDone.length) verdict = '⚠️'
   else verdict = '✅'
 
-  const row = { c, trace, source, reply, missing, hitForbidden, extra, allergenHit, verdict }
+  const row = { c, trace, source, reply, missing, hitForbidden, extra, allergenHit, missingPending, unexpectedPending, claimedDone, verdict }
   rows.push(row)
 
   if (verdict.startsWith('❌') || verdict.startsWith('⚠️') || allergenHit.length) {

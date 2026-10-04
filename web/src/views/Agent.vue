@@ -23,7 +23,46 @@
         <div class="bubble user">{{ m.text }}</div>
         <div v-if="m.loading" class="bubble agent dim">正在思考…</div>
         <template v-else-if="m.data">
-          <div v-if="m.data.reply" class="bubble agent">{{ m.data.reply }}</div>
+          <!-- 有待确认动作时，主文案由程序固定给出，模型文字只作补充（不让模型自己说"已记录"） -->
+          <div v-if="hasPending(m)" class="bubble agent">我准备好了以下操作，请逐条确认：</div>
+          <div v-else-if="m.data.reply" class="bubble agent">{{ m.data.reply }}</div>
+
+          <div v-if="hasPending(m)" class="cards">
+            <div v-for="a in m.data.pendingActions" :key="a.id" class="pick confirm-card">
+              <div class="pick-title">{{ describeAction(a) }}</div>
+
+              <ul v-if="a.type === 'addMealLog'" class="act-list">
+                <li v-for="(it, i) in a.items" :key="i">{{ it.name }} · {{ it.portion }}</li>
+              </ul>
+              <ul v-else-if="a.type === 'addFridgeItems'" class="act-list">
+                <li v-for="(it, i) in a.items" :key="i">{{ it.name }} · {{ it.quantity }}{{ it.unit }} · {{ zoneLabel(it.storageZone) }}</li>
+              </ul>
+              <div v-else-if="a.type === 'removeFridgeItem'">
+                <div v-if="a.candidates.length > 1" class="pick-reason">冰箱里有多个「{{ a.query }}」，请选择要删除哪一个：</div>
+                <label v-for="c in a.candidates" :key="c.id" class="cand">
+                  <input v-if="a.candidates.length > 1" type="radio" :name="a.id" :value="c.id"
+                         v-model="states[a.id].selectedId" :disabled="!canAct(a)" />
+                  {{ c.name }} · {{ c.quantity }}{{ c.unit }}
+                </label>
+              </div>
+
+              <div v-if="states[a.id].status === 'done'" class="act-result ok">✓ {{ states[a.id].message }}</div>
+              <div v-else-if="states[a.id].status === 'cancelled'" class="act-result">已取消，没有做任何改动</div>
+              <template v-else>
+                <div v-if="states[a.id].status === 'error'" class="act-result err">{{ states[a.id].message }}</div>
+                <div class="act-buttons">
+                  <button class="act-btn primary" :disabled="states[a.id].status === 'busy'" @click="confirmAction(a)">
+                    {{ states[a.id].status === 'busy' ? '写入中…' : '确认' }}
+                  </button>
+                  <button class="act-btn" :disabled="states[a.id].status === 'busy'" @click="cancelAction(a)">取消</button>
+                </div>
+              </template>
+            </div>
+            <details v-if="m.data.reply" class="agent-note">
+              <summary>Agent 的补充说明</summary>
+              <div>{{ m.data.reply }}</div>
+            </details>
+          </div>
 
           <!-- 推荐卡（recommend / party） -->
           <div v-if="m.data.picks && m.data.picks.length" class="cards">
@@ -63,13 +102,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getProfile, getDiary, getTodayContext, getDeliveryStores,
   getSavedLocation, deriveAgeMode, getFridgeSnapshot
 } from '../services/store.js'
 import { agent } from '../services/agent.js'
+import { commitAction, describeAction } from '../services/agentActions.js'
+import { STORAGE_ZONES } from '../services/shelfLife.js'
 
 const router = useRouter()
 const draft = ref('')
@@ -112,11 +153,36 @@ async function send(text) {
   scrollDown()
   const r = await agent({ userText: text, memory: buildMemory() })
   const data = (r && r.ok && r.data) ? r.data : { reply: '（回答失败，请重试）' }
+  // 先初始化每张确认卡的状态，再让模板渲染它们（模板里直接读 states[a.id]）
+  ;(data.pendingActions || []).forEach(a => {
+    states[a.id] = {
+      status: 'idle', message: '',
+      selectedId: a.candidates && a.candidates.length === 1 ? a.candidates[0].id : ''
+    }
+  })
   const last = messages.value[messages.value.length - 1]
   last.loading = false
   last.data = data
   sending.value = false
   scrollDown()
+}
+
+// —— 待确认动作（确认卡）——
+const states = reactive({})
+const hasPending = m => !!(m.data && m.data.pendingActions && m.data.pendingActions.length)
+const zoneLabel = key => (STORAGE_ZONES.find(z => z.key === key) || { label: key }).label
+const canAct = a => ['idle', 'error'].includes(states[a.id].status)
+
+async function confirmAction(a) {
+  const s = states[a.id]
+  if (!canAct(a)) return          // 点过一次后按钮即禁用，双击不会重复提交
+  s.status = 'busy'
+  const r = await commitAction(a, { selectedId: s.selectedId })
+  s.status = r.ok ? 'done' : 'error'
+  s.message = r.message
+}
+function cancelAction(a) {
+  if (canAct(a)) states[a.id].status = 'cancelled'
 }
 
 function scrollDown() {
@@ -237,6 +303,23 @@ onMounted(() => {
 .pick-meta { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: #a89684; }
 .pick-howto { font-size: 12px; color: #a89684; line-height: 1.5; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(74, 52, 40, 0.10); }
 .pick.nutri .pick-dish { font-size: 15px; }
+
+/* 确认卡 */
+.confirm-card { border: 1px solid rgba(196, 106, 58, 0.30); }
+.act-list { margin: 4px 0 0; padding-left: 18px; font-size: 15px; color: #2a1e17; line-height: 1.7; }
+.cand { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 15px; color: #2a1e17; }
+.act-buttons { display: flex; gap: 10px; margin-top: 14px; }
+.act-btn {
+  padding: 8px 20px; border-radius: 999px; font-size: 14px; cursor: pointer;
+  background: transparent; color: #5a4a3f; border: 1px solid rgba(74, 52, 40, 0.18);
+}
+.act-btn.primary { background: #c46a3a; color: #fff; border-color: #c46a3a; }
+.act-btn:disabled { opacity: 0.5; cursor: default; }
+.act-result { margin-top: 12px; font-size: 13px; color: #a89684; }
+.act-result.ok { color: #4a7a4a; }
+.act-result.err { color: #a04a3a; }
+.agent-note { font-size: 12px; color: #a89684; padding-left: 4px; }
+.agent-note summary { cursor: pointer; }
 
 .trace { font-size: 11px; color: #c3b6a6; align-self: flex-start; padding-left: 4px; }
 

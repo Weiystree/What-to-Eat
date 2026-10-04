@@ -81,12 +81,15 @@ web/
 ├─ lib/runtime/                    后端运行时（被 api/agent.js 与 eval 共用）
 │  ├─ runners.js                   各 action 的执行器（recommend / recognizeMeal / fridgeItems / ingredients / mealMemory …）
 │  ├─ llm.js                       callLLM（Function Calling / JSON Mode）+ callAgent（多轮 tool calling）+ schema
-│  ├─ orchestrator.js              Agent 编排：System Prompt + 最多 3 步 tool 循环，返回 reply + trace
-│  ├─ skills.js                    Agent 工具注册表（7 个 skill ↔ runner）
+│  ├─ orchestrator.js              Agent 编排：System Prompt + 最多 3 步 tool 循环，返回 reply + trace + pendingActions
+│  ├─ skills.js                    Agent 工具注册表（12 个 skill ↔ runner）
+│  ├─ fridgeTools.js               冰箱读取工具（确定性，过滤 memory.fridge）
+│  ├─ agentActions.js              写工具：只构造待确认动作，绝不落库
+│  ├─ *.test.js                    vitest 单测（与被测文件同目录）
 │  └─ places.js                    Google Places 附近餐厅
 ├─ .claude/skills/                 meal-* 技能说明（recommend / nutrition / party / recognize / fridge / chat）
 ├─ eval/                           Agent 工具路由评估（见十二）
-│  ├─ cases.mjs                    15 条用例 + 统一虚拟用户 BASE_MEMORY
+│  ├─ cases.mjs                    21 条用例 + 统一虚拟用户 BASE_MEMORY（含 expectPending / forbidReplyPhrases 断言）
 │  ├─ run.mjs                      本地执行器（直接调 orchestrator）
 │  └─ run-http.mjs                 线上执行器（POST 已部署 /api/agent）
 ├─ v2.md                           V2 产品重构规格
@@ -98,6 +101,7 @@ web/
    ├─ services/
    │  ├─ agent.js                  统一 fetch → /api/agent；失败降级本地 mock
    │  ├─ store.js                  localStorage 封装（key 单一登记 ALL_KEYS）+ formatDateKey + 画像导出/导入 + 店铺聚合
+   │  ├─ agentActions.js           确认卡「确认」后的提交端：幂等 + 提交前校验 + 落库
    │  ├─ shelfLife.js              冰箱保质期/新鲜度（确定性规则，无 LLM）+ deductInventory 扣减
    │  └─ mealTime.js               餐次推断 guessMeal / guessNextMeal（全站唯一实现）
    ├─ styles/global.css            设计系统
@@ -181,10 +185,31 @@ userText + memory(画像/近期日记/今日状态/常吃店铺/定位) + 可选
 { ok, source: 'llm', data: { ...lastToolData, reply, trace } }
 ```
 
-7 个工具（`lib/runtime/skills.js`）：`meal_recommend` / `meal_nutrition` / `meal_party` / `meal_recognize` / `meal_fridge` / `meal_ingredients` / `meal_memory`。
-重数据（profile、recentDiary…）由 orchestrator 注入 context，模型只传最小参数；`trace` 记录实际调用的工具，供评估使用。
+12 个工具（`lib/runtime/skills.js`）：
 
-> 目前 Agent 工具**全是读/生成类**，没有写入类工具（记录一餐、增删冰箱食材），也没有确认流程。
+| 类型 | 工具 |
+| --- | --- |
+| 生成 | `meal_recommend` / `meal_nutrition` / `meal_party` / `meal_recognize` / `meal_fridge`（识别照片）/ `meal_ingredients` |
+| 读 | `meal_memory`（按日期/餐次查日记）/ `meal_fridge_inventory` / `meal_expiring_foods` |
+| 写（只提议） | `meal_add_meal_log` / `meal_add_fridge_item` / `meal_remove_fridge_item` |
+
+重数据（profile、recentDiary、fridge…）由 orchestrator 注入 context，模型只传最小参数；`trace` 记录实际调用的工具，供评估使用。
+
+**写工具永远不直接写数据**：服务端无状态、数据在浏览器 localStorage，所以写工具只返回 `pendingAction`，由 orchestrator 收进 `data.pendingActions[]`（所有出口——正常结束 / 步数耗尽 / LLM 出错——都带上）。前端 `Agent.vue` 渲染确认卡，用户点「确认」后由 `src/services/agentActions.js` 调 `store.js` 落库：
+
+```
+模型 tool_call ─► lib/runtime/agentActions.js build*() ─► pendingAction（id, type, 载荷）
+                                    │ orchestrator 收集
+                                    ▼
+          Agent.vue 确认卡（主文案由程序固定写「请确认」，模型文字折叠）
+                                    │ 用户点确认
+                                    ▼
+   commitAction(): 幂等(同 id 只成功一次) → 校验(删除时 id+名称须与当前冰箱一致) → store.js
+```
+
+- 删除食材：服务端先精确匹配再包含匹配，解析成具体 id；多个候选时在卡内让用户点选。
+- 记录一餐：热量/分类在确认时用现有 `estimateMeal` 估算，失败则退化为 `category: 'other'`，不整体失败。
+- 冰箱读取：客户端把精简清单（含本地算好的新鲜度）放进 `memory.fridge`，服务端读工具只过滤排序。
 
 ### 4.4 响应 envelope
 
@@ -465,8 +490,8 @@ printf '%s' "deepseek-chat" | npx vercel env add LLM_TEXT_MODEL production
 | Phase 1 · IA 重构 | ✅ 基本完成 | 五 Tab（今日/冰箱/日记/饭搭子/我的）；首页两大入口（在家做 / 出去吃 + 记录这一餐）；Party/Community 合并为 Partner |
 | Phase 2 · 持久化冰箱 | ✅ 完成 | 三区库存、`shelfLife.js` 确定性新鲜度、拍/手动/告诉 Agent 录入、增删改；「用它做点什么」默认预选临期食材、排除已过期的（用户能否手动勾选过期食材未做硬限制） |
 | Phase 3 · 决策分支 | 🟡 部分 | 「用它做点什么」走 `ingredients` 单独生成；**尚未**拆出 `recommendHome / recommendEatingOut / recommendGroup` 三个独立推荐；冰箱食材的临期优先级未传入 `recommend` |
-| Phase 4 · 记录闭环 | 🟡 部分 | 在家做完成 → 写日记 + 扣减库存 ✅；拍照走 Confirm 确认 ✅；手动记录直接入日记，**无统一确认页**；**无「是否分享给好友」**一步 |
-| Phase 5 · Global Agent | 🟡 雏形 | 已有 `/agent` 页 + 7 个只读/生成类工具 + 15 条评估用例；**不是**全局悬浮层（仅今日页有入口）；**无写操作工具与确认流程**；无朋友画像/冰箱读取工具 |
+| Phase 4 · 记录闭环 | 🟡 部分 | 在家做完成 → 写日记 + 扣减库存 ✅；拍照走 Confirm 确认 ✅；Agent 记录一餐走确认卡 ✅；今日页手动记录直接入日记，**无统一确认页**；**无「是否分享给好友」**一步 |
+| Phase 5 · Global Agent | 🟡 进行中 | `/agent` 页 + 12 个工具（含冰箱读取、记录/增删冰箱的**待确认**写工具）+ 21 条评估用例；**仍不是**全局悬浮层（仅今日页有入口）；无好友画像 / 附近餐厅读取工具；**无对话历史**（每次请求只带当前一句） |
 
 ### 11.2 其他已完成
 - 首次注册流（品牌 + 基础 + 口味）；三种年龄模式；过敏原/忌口自定义
@@ -482,7 +507,8 @@ printf '%s' "deepseek-chat" | npx vercel env add LLM_TEXT_MODEL production
 
 ### 11.3 已知缺口 / 下一步（按 v2.md 验收 Q1–Q7）
 - **Q4 朋友画像**：好友之间尚未共享 Food Profile（过敏/忌口/菜系…），也没有「临时添加一起吃的人」→ 聚餐仍靠粘贴 `MEAL1:` 文本合并画像
-- **Q6 Agent 全能**：需要写入类工具（`addMealLog` / `addFridgeItem` / `removeFridgeItem`）+ 写前确认；需要读取冰箱 / 好友画像 / 附近餐厅的工具
+- **Q6 Agent 全能**：写工具 + 确认卡已完成；还差好友画像 / 附近餐厅读取、对话历史（澄清后用户的回答目前接不上上文）、全局悬浮入口。**写工具的路由准确度尚未对真实 LLM 验证**——需部署后跑 `node eval/run-http.mjs`（尤其注意 c8「记一下热量」可能在 `meal_recognize` 与 `meal_add_meal_log` 之间摇摆）
+- **已知未处理**：记录一餐不支持指定日期（「昨天晚饭吃了…」会记到今天）；拒绝确认卡后无法就地修改（需重新说一次）
 - **Q5 记录一次即三用**：补统一 Meal Confirmation + 可选分享到 Feed
 - **Safety Hard Filter**：过敏/忌口/过期食材目前主要靠 System Prompt 约束，v2.md 要求在代码层二次硬过滤（尤其聚餐）
 - 架构审计里的 P1/P2 项（组件拆分、统一状态层等）**尚未处理**，本轮只做了 P0
@@ -505,7 +531,9 @@ npm i -g vercel
 vercel dev               # 同时起前端 + /api，需要本地 .env.local
 ```
 
-生产构建：`npm run build` → 输出到 `dist/`。目前没有前端单元测试，构建通过 + 下面的 Agent 评估是仅有的自动检查。
+生产构建：`npm run build` → 输出到 `dist/`。
+
+单元测试：`npm test`（vitest，纯函数 + orchestrator 行为 + 确认提交逻辑，不调真实 LLM、不依赖 localStorage）。Agent 工具路由是否选对，要靠下面的 eval 对真实 LLM 验证。
 
 ### Agent 评估（`eval/`）
 

@@ -193,6 +193,51 @@ export const CASES = [
     forbidden: ['meal_fridge', 'meal_recognize', 'meal_party']
   },
   {
+    id: 'c18',
+    category: '写入·加冰箱（待确认）',
+    input: '我昨天买了500克鸡胸肉和三个番茄，帮我放冰箱里',
+    problem: '应只生成待确认的加冰箱动作，不能直接说已加入',
+    expected: ['meal_add_fridge_item'],
+    forbidden: ['meal_fridge', 'meal_recognize', 'meal_party', 'meal_recommend'],
+    expectPending: 'addFridgeItems',
+    forbidReplyPhrases: ['已加入', '已添加', '已放入']
+  },
+  {
+    id: 'c19',
+    category: '写入·记录一餐（待确认）',
+    input: '帮我记录一下，我刚吃了一份海南鸡饭',
+    problem: '应只生成待确认的记录动作，不能直接说已记录',
+    expected: ['meal_add_meal_log'],
+    forbidden: ['meal_fridge', 'meal_party', 'meal_recommend'],
+    expectPending: 'addMealLog',
+    forbidReplyPhrases: ['已记录', '已为你记录', '已经记录']
+  },
+  {
+    id: 'c20',
+    category: '写入·删冰箱（多候选）',
+    input: '帮我把冰箱里的鸡蛋删了',
+    problem: '冰箱里有同名食材时应生成带候选的删除动作，由用户选择',
+    expected: ['meal_remove_fridge_item'],
+    forbidden: ['meal_fridge', 'meal_recognize', 'meal_party', 'meal_recommend'],
+    expectPending: 'removeFridgeItem',
+    memoryOverride: {
+      fridge: [
+        { id: 'f3', name: '鸡蛋', quantity: 6, unit: '个', storageZone: 'fridge', status: 'fresh', daysLeft: 20 },
+        { id: 'f9', name: '鸡蛋', quantity: 2, unit: '个', storageZone: 'freezer', status: 'good', daysLeft: 5 }
+      ]
+    },
+    forbidReplyPhrases: ['已删除', '已经删除', '已移除']
+  },
+  {
+    id: 'c21',
+    category: '写入·只是提问不该写',
+    input: '冰箱里的鸡蛋还能放几天？',
+    problem: '只是询问，不该生成任何写入动作',
+    expected: ['meal_fridge_inventory'],
+    forbidden: ['meal_add_fridge_item', 'meal_remove_fridge_item', 'meal_add_meal_log', 'meal_fridge'],
+    expectNoPending: true
+  },
+  {
     id: 'c15',
     category: '闲聊兜底',
     input: '你好呀，今天天气不错',

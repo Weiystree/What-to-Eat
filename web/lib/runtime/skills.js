@@ -6,6 +6,7 @@ import {
   runIngredients, runMealMemory
 } from './runners.js'
 import { runFridgeInventory, runExpiringFoods } from './fridgeTools.js'
+import { buildAddMealLog, buildAddFridgeItems, buildRemoveFridgeItem } from './agentActions.js'
 
 // 每个 skill 的 tool 输入（最小参数；重数据如 profile/recentDiary 由 orchestrator 注入 memory）
 const AGENT_TOOL_INPUTS = {
@@ -56,7 +57,54 @@ const AGENT_TOOL_INPUTS = {
     required: ['query']
   },
   meal_fridge_inventory: { type: 'object', properties: {} },
-  meal_expiring_foods: { type: 'object', properties: {} }
+  meal_expiring_foods: { type: 'object', properties: {} },
+  meal_add_meal_log: {
+    type: 'object',
+    properties: {
+      meal: { type: 'string', enum: ['早餐', '午餐', '加餐', '晚餐', '夜宵'], description: '可选：餐次；用户没说就不要传' },
+      items: {
+        type: 'array',
+        description: '用户吃了的每一项菜品',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '菜名，如"海南鸡饭"' },
+            portion: { type: 'string', description: '可选：份量，如"一碗""半份"' }
+          },
+          required: ['name']
+        }
+      }
+    },
+    required: ['items']
+  },
+  meal_add_fridge_item: {
+    type: 'object',
+    properties: {
+      items: {
+        type: 'array',
+        description: '用户要放进冰箱的每一样食材',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '食材名，如"鸡胸肉"' },
+            quantity: { type: 'number', description: '数量，如 500、3' },
+            unit: { type: 'string', description: '单位，如 g、个、盒' },
+            storageZone: { type: 'string', enum: ['fridge', 'zero_zone', 'freezer'], description: '存放区：冷藏/零度保鲜/冷冻；不确定就不传' },
+            category: { type: 'string', enum: ['staple', 'veg', 'fruit', 'meat', 'seafood', 'egg', 'bean', 'dairy', 'other'], description: '食材分类' }
+          },
+          required: ['name']
+        }
+      }
+    },
+    required: ['items']
+  },
+  meal_remove_fridge_item: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: '要从冰箱删除/标记吃完的食材名，如"鸡蛋"' }
+    },
+    required: ['name']
+  }
 }
 
 const SKILL_REGISTRY = [
@@ -113,6 +161,24 @@ const SKILL_REGISTRY = [
     description: '读取冰箱里临期或已过期的食材，按最急排序。当用户问"什么快过期/哪些要尽快吃"时调用。',
     input: AGENT_TOOL_INPUTS.meal_expiring_foods,
     runner: runExpiringFoods
+  },
+  {
+    name: 'meal_add_meal_log',
+    description: '帮用户记录一顿已吃的饭。只会生成"待确认"的记录，用户点确认后才会真正写入日记，所以调用后不能说"已记录"。当用户说"帮我记一下我吃了X"时调用；用户只是问问题时不要调用。',
+    input: AGENT_TOOL_INPUTS.meal_add_meal_log,
+    runner: buildAddMealLog
+  },
+  {
+    name: 'meal_add_fridge_item',
+    description: '帮用户把买回来的食材加进冰箱。只会生成"待确认"的动作，用户点确认后才会真正写入冰箱，所以调用后不能说"已加入"。当用户说"我买了X、Y，放冰箱里"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_add_fridge_item,
+    runner: buildAddFridgeItems
+  },
+  {
+    name: 'meal_remove_fridge_item',
+    description: '帮用户把某样食材从冰箱删除。只会生成"待确认"的动作，用户点确认后才会真正删除，如有多个同名食材由用户在卡片里选择，所以调用后不能说"已删除"。当用户说"把X删了/X吃完了"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_remove_fridge_item,
+    runner: p => buildRemoveFridgeItem(p, p && p.fridge)
   }
 ]
 
