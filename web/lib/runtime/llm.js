@@ -54,6 +54,12 @@ const SYSTEM_PROMPT = `你是饮食决策助手，帮用户 1 分钟内决定下
 === 场景特殊规则 ===
 10. 餐厅场景（scene为"餐厅"且提供了nearbyPlaces）：dish 格式"店名 · 菜品"，三张必须从 nearbyPlaces 选店。reason 提评分和距离，placeId 填回对应店的 placeId。尽量不同店。signatureDishes 给 2~3 个该店推荐菜品建议（可参考 nearbyPlaces 里的 dishes 提示词发挥），这是建议不是该店真实菜单，非餐厅场景可不填。
 
+=== 在家做饭模式（mode=home 且提供 homeContext 时） ===
+10a. 推荐必须优先消耗 homeContext.expiring 里的临期食材（urgent 最优先），reason 里说明"某食材最好今天处理"。
+10b. 尽量提高已有食材覆盖率：用足 homeContext.available，少让用户额外买。uses 填这道菜用到的已有食材，missing 填还需要买的。
+10c. time 按做饭总时长估（含备菜）；howto 写简要做法；预算按需补购（missing）部分估。
+10d. 只能使用 homeContext 提供的食材做已有部分，绝不使用已过期食材（homeContext 里本就不含过期项）。
+
 === 输出格式 ===
 11. refineHint 非空时向该方向靠拢：healthier→显著降低油盐精制碳水比例，增加蔬菜全谷物；tastier→提升偏好匹配度，允许更多用户喜欢的口味。
 12. seed 用于变化选择避免与 previousPicks 重复。
@@ -212,6 +218,8 @@ const SCHEMAS = {
               time:      { type: 'string' },
               allergens: { type: 'array', items: { type: 'string' } },
               swaps:     { type: 'array', items: { type: 'string' } },
+              uses:      { type: 'array', items: { type: 'string' }, description: '在家做饭模式：这道菜用到的用户已有食材' },
+              missing:   { type: 'array', items: { type: 'string' }, description: '在家做饭模式：还需要买的食材' },
               howto:     { type: 'string' },
               placeId:   { type: 'string' },
               signatureDishes: { type: 'array', items: { type: 'string' } }

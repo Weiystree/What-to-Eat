@@ -51,6 +51,22 @@ describe('commitAction addMealLog', () => {
     expect((await commitAction(mealAction, {}, d)).ok).toBe(true)
     expect(d.mergeFoodEstimates).not.toHaveBeenCalled()
   })
+
+  it('backdates the entry when the action carries dateOffset (昨天/前天补录)', async () => {
+    const d = makeDeps({ guessMeal: (date) => (date ? '按补录时间推断' : '今晚') })
+    const r = await commitAction({ ...mealAction, meal: null, dateOffset: -1 }, {}, d)
+    expect(r.ok).toBe(true)
+    const entry = d.appendDiary.mock.calls[0][0]
+    expect(typeof entry.createdAt).toBe('number')
+    expect(entry.createdAt).toBeLessThan(Date.now() - 12 * 3600 * 1000)
+    expect(entry.meal).toBe('按补录时间推断')
+  })
+
+  it('does not attach createdAt when there is no dateOffset', async () => {
+    const d = makeDeps()
+    await commitAction(mealAction, {}, d)
+    expect(d.appendDiary.mock.calls[0][0].createdAt).toBeUndefined()
+  })
 })
 
 describe('commitAction addFridgeItems', () => {

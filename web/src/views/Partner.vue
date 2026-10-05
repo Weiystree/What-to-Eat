@@ -161,6 +161,13 @@
         </div>
       </div>
 
+      <!-- Q4 · Food Profile Sharing：口味共享给好友（不含生日/体重/日记） -->
+      <div class="card">
+        <div class="section-label">口味共享</div>
+        <p class="hint" style="margin:0 0 12px;">开启后，好友聚餐时能参考你的菜系偏好与过敏/忌口（不会共享生日、体重、日记）。</p>
+        <button class="add-btn" :class="{ on: shareOn }" @click="toggleShare">{{ shareOn ? '已共享 ✓ 点击关闭' : '共享我的口味' }}</button>
+      </div>
+
       <div class="card">
         <div class="section-label">添加好友</div>
         <div class="add-row">
@@ -169,13 +176,15 @@
         </div>
       </div>
 
-      <div class="card" v-if="friends.length">
-        <div class="section-label">好友 · {{ friends.length }}</div>
-        <div class="friend-row">
-          <div v-for="f in friends" :key="f.code" class="friend-chip">
-            <div class="friend-face">{{ f.emoji }}</div>
-            <div class="friend-name">{{ f.name }}</div>
+      <div class="card" v-if="friendRows.length">
+        <div class="section-label">好友 · {{ friendRows.length }}</div>
+        <div v-for="f in friendRows" :key="f.code" class="friend-line">
+          <div class="friend-face">{{ f.emoji }}</div>
+          <div class="friend-main">
+            <div class="friend-name2">{{ f.name }}</div>
+            <div class="friend-share">{{ shareSummary(f) }}</div>
           </div>
+          <button v-if="f.share" class="add-btn" @click="addFriendMember(f)">加入聚餐</button>
         </div>
       </div>
 
@@ -207,11 +216,19 @@
 
 <script setup>
 import { reactive, ref, onMounted, computed } from 'vue'
-import { getProfile, decodeProfileText, getCommunityMe, setCommunityMe, getDiary } from '../services/store.js'
+import { useRoute } from 'vue-router'
+import {
+  getProfile, decodeProfileText, getCommunityMe, setCommunityMe, getDiary,
+  getSavedLocation, requestGeolocation
+} from '../services/store.js'
 import {
   party as callParty,
-  communityRegister, communityAddFriend, communityFriends, communityPost, communityFeed
+  recommendGroup as callRecommendGroup,
+  communityRegister, communityAddFriend, communityFriends, communityPost, communityFeed,
+  communityShareProfile, communityGetProfiles
 } from '../services/agent.js'
+
+const route = useRoute()
 
 // —— 聚餐决定（原 Party） ——
 const USER_EMOJIS = ['😊', '😎', '🤗', '🫡', '😋', '🤓', '🥳', '😺', '🐱', '🐶', '🦊', '🐼']
@@ -321,22 +338,95 @@ function onTouchEnd(e) {
   }
 }
 
+// 餐厅场景走 recommendGroup（v2.md #19：好友画像 + 定位附近餐厅）；家里做走 runParty
 async function generate() {
   running.value = true
   picks.value = []
-  const payload = {
-    members: members.value.map(m => ({
-      name: m.name, isMe: m.isMe,
-      cuisines: m.cuisines, spicy: m.spicy,
-      allergies: m.allergies, taboos: m.taboos,
-      healthPrefs: m.healthPrefs
-    })),
-    party: { ...party }
+  const list = members.value.map(m => ({
+    name: m.name, isMe: m.isMe,
+    cuisines: m.cuisines, spicy: m.spicy,
+    allergies: m.allergies, taboos: m.taboos,
+    healthPrefs: m.healthPrefs
+  }))
+  const payload = { members: list, party: { ...party } }
+  let r
+  if (party.scene === '餐厅') {
+    let loc = getSavedLocation()
+    if (!loc) loc = await requestGeolocation(8000)
+    payload.location = loc
+    r = await callRecommendGroup(payload)
+  } else {
+    r = await callParty(payload)
   }
-  const r = await callParty(payload)
   running.value = false
   if (r && r.ok) picks.value = r.data.picks || []
   else alert('生成失败，请稍后再试')
+}
+
+// —— Q4 · Food Profile Sharing ——
+const shareOn = ref(false)
+const friendProfiles = ref([])
+// 好友展示行：优先用带共享画像的数据，拿不到就退化为基本信息
+const friendRows = computed(() => {
+  if (friendProfiles.value.length) return friendProfiles.value
+  return friends.value.map(f => ({ ...f, share: null }))
+})
+
+function shareSummary(f) {
+  if (!f.share) return '未共享口味'
+  const s = f.share
+  const parts = []
+  if ((s.cuisines || []).length) parts.push('喜欢 ' + s.cuisines.join('/'))
+  if ((s.allergies || []).length) parts.push('过敏：' + s.allergies.join('、'))
+  if ((s.taboos || []).length) parts.push('忌口：' + s.taboos.join('、'))
+  if (s.dislikes) parts.push('讨厌 ' + s.dislikes)
+  return parts.length ? parts.join(' · ') : '共享了画像（无特殊限制）'
+}
+
+async function loadFriendProfiles() {
+  const r = await communityGetProfiles({ meCode: me.value.code })
+  if (r && r.ok && r.data) {
+    friendProfiles.value = r.data.friends || []
+    shareOn.value = !!(r.data.me && r.data.me.share)
+  }
+}
+
+async function toggleShare() {
+  const next = !shareOn.value
+  const p = getProfile() || {}
+  const share = next ? {
+    allergies: (p.basic && p.basic.allergies) || [],
+    taboos: (p.basic && p.basic.taboos) || [],
+    cuisines: (p.prefer && p.prefer.cuisines) || [],
+    spicy: p.prefer && p.prefer.spicy,
+    dislikes: (p.prefer && p.prefer.dislikes) || '',
+    healthPrefs: (p.basic && p.basic.healthPrefs) || []
+  } : null
+  const r = await communityShareProfile({ meCode: me.value.code, share })
+  if (r && r.ok) {
+    shareOn.value = next
+    loadFriendProfiles()
+  } else {
+    alert('操作失败，请稍后再试')
+  }
+}
+
+// 把共享了口味的好友一键加入聚餐参与者（画像预填，可再编辑）
+function addFriendMember(f) {
+  if (members.value.some(m => m.friendCode === f.code)) { alert(f.name + ' 已经在参与者里'); return }
+  const s = f.share || {}
+  const m = newMember({
+    name: f.name,
+    cuisines: s.cuisines || [],
+    spicy: s.spicy != null ? s.spicy : 1,
+    allergies: s.allergies || [],
+    taboos: s.taboos || []
+  })
+  m.friendCode = f.code
+  members.value.push(m)
+  activeIdx.value = members.value.length - 1
+  pageIdx.value = 0
+  showParty.value = true
 }
 
 // —— 饭搭子（原 Community） ——
@@ -378,6 +468,7 @@ async function addFriend() {
     friends.value = r.data.friends || friends.value
     friendCodeDraft.value = ''
     loadFeed()
+    loadFriendProfiles()
     if (r.data.friend) alert('已添加 ' + r.data.friend.name)
   } else {
     alert((r && r.error) || '添加失败')
@@ -463,12 +554,15 @@ onMounted(() => {
   members.value.push(me0)
   addMember()
   activeIdx.value = 0
+  // 从今日页「出去吃 → 和朋友」进来时直接展开聚餐面板
+  if (route.query.party) showParty.value = true
 
   // 饭搭子身份初始化
   me.value = getCommunityMe()
   if (me.value) {
     loadFriends()
     loadFeed()
+    loadFriendProfiles()
     mealDraft.value = todaySummary()
   }
 })
@@ -641,6 +735,17 @@ onMounted(() => {
   justify-content: center; font-size: 22px;
 }
 .friend-name { font-size: 11px; color: var(--ink-2); max-width: 56px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 好友行（含共享画像） */
+.friend-line {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid rgba(74,52,40,0.06);
+}
+.friend-line:last-child { border-bottom: none; }
+.friend-main { flex: 1; min-width: 0; }
+.friend-name2 { font-size: 15px; color: var(--ink); }
+.friend-share { font-size: 12px; color: var(--ink-3); margin-top: 2px; line-height: 1.5; }
+.add-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 .post-card { padding: 18px 0 22px; }
 .post-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }

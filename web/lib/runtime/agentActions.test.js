@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  buildAddMealLog, buildAddFridgeItems, buildRemoveFridgeItem, resolveFridgeCandidates
+  buildAddMealLog, buildAddFridgeItems, buildRemoveFridgeItem, resolveFridgeCandidates,
+  parseDateArg
 } from './agentActions.js'
 
 const FRIDGE = [
@@ -41,6 +42,35 @@ describe('buildAddMealLog', () => {
     const a = await buildAddMealLog({ items: [{ name: '饭' }] })
     const b = await buildAddMealLog({ items: [{ name: '饭' }] })
     expect(a.pending.id).not.toBe(b.pending.id)
+  })
+})
+
+describe('buildAddMealLog date support', () => {
+  it('parses relative day words into offsets', () => {
+    expect(parseDateArg('昨天')).toEqual({ offset: -1, label: '昨天' })
+    expect(parseDateArg('前天')).toEqual({ offset: -2, label: '前天' })
+    expect(parseDateArg('大前天')).toEqual({ offset: -3, label: '大前天' })
+    expect(parseDateArg('')).toEqual({ offset: 0, label: '' })
+    expect(parseDateArg('今天')).toEqual({ offset: 0, label: '' })
+  })
+
+  it('parses absolute dates within the last 30 days and rejects old ones', () => {
+    const d = new Date(); d.setDate(d.getDate() - 5)
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    expect(parseDateArg(iso).offset).toBe(-5)
+    expect(parseDateArg('2020-01-01')).toEqual({ offset: 0, label: '' })
+  })
+
+  it('carries dateOffset onto the pending action and mentions it in the summary', async () => {
+    const r = await buildAddMealLog({ meal: '晚餐', date: '昨天', items: [{ name: '海南鸡饭' }] })
+    expect(r.pending.dateOffset).toBe(-1)
+    expect(r.data.summary).toContain('昨天')
+  })
+
+  it('omits dateOffset when the user did not mention a date', async () => {
+    const r = await buildAddMealLog({ meal: '晚餐', items: [{ name: '海南鸡饭' }] })
+    expect(r.pending.dateOffset).toBe(0)
+    expect(r.data.summary).not.toContain('昨天')
   })
 })
 

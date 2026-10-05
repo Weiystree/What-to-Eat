@@ -22,6 +22,13 @@ const defaultDeps = {
 const fail = message => ({ ok: false, message })
 const ok = message => ({ ok: true, message })
 
+// 补录：dateOffset 为负数（-1 昨天 / -2 前天…）时把时间戳回拨对应天数
+function shiftedTs(dateOffset) {
+  const off = Number(dateOffset) || 0
+  if (off >= 0) return null
+  return Date.now() + off * 24 * 60 * 60 * 1000
+}
+
 async function commitAddMealLog(action, d) {
   const base = action.items.map(it => ({ name: it.name, portion: it.portion || '一份', category: 'other', method: 'Agent 记录' }))
   let items = base
@@ -35,10 +42,12 @@ async function commitAddMealLog(action, d) {
   } catch (e) {
     // 估算失败：保留 category:'other' 的兜底 items
   }
-  d.appendDiary({
-    items, meal: action.meal || d.guessMeal(),
+  const ts = shiftedTs(action.dateOffset)
+  d.appendDiary(Object.assign({
+    items,
+    meal: action.meal || d.guessMeal(ts ? new Date(ts) : undefined),
     confirmed: true, awaitingFeedback: false, source: 'Agent'
-  })
+  }, ts ? { createdAt: ts } : {}))
   return ok(`已记录：${items.map(i => i.name).join('、')}`)
 }
 
@@ -80,8 +89,12 @@ export async function commitAction(action, opts = {}, deps = {}) {
 }
 
 // 确认卡标题
+const DATE_LABELS = { '-1': '昨天', '-2': '前天', '-3': '大前天' }
 export function describeAction(action) {
-  if (action.type === 'addMealLog') return `记录${action.meal || '这一餐'}`
+  if (action.type === 'addMealLog') {
+    const day = DATE_LABELS[String(action.dateOffset)] || ''
+    return `记录${day ? day : ''}${action.meal || '这一餐'}`
+  }
   if (action.type === 'addFridgeItems') return '加入冰箱'
   if (action.type === 'removeFridgeItem') return '从冰箱删除'
   return '操作'

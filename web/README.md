@@ -160,16 +160,22 @@ web/
 | `fridgeToRecipe` | （旧流程，保留兼容） | 识别冰箱食材 + 推荐 2~3 道菜 | llm（vision） |
 | `fridgeItems` | Fridge 拍冰箱/告诉 Agent | 照片或文字 → 结构化食材清单（name/category/quantity/unit/storageZone/freshness） | llm（vision 或 text） |
 | `ingredients` | Fridge 用它做点什么 | 文字食材 → 可做的菜（含还缺什么） | llm（text） |
-| `recommend` | RecommendList | 三选一推荐（可带 nearbyPlaces / refineHint） | llm（text） |
+| `recommend` | RecommendList | 出去吃/一般三选一推荐（可带 nearbyPlaces / refineHint） | llm（text） |
+| `recommendHome` | RecommendList（`?mode=home`） | **在家做**：冰箱临期优先，标明"已有/还缺"，过期食材代码层剥离 | llm（text） |
+| `recommendGroup` | Partner 帮我们决定（餐厅场景） | **和朋友出去吃**：成员画像合并硬排除 + 附近餐厅 | llm（text） |
 | `dailyNutrition` | Today 首屏 | 今日营养建议卡 | llm（text） |
-| `party` | Partner 帮我们决定 | 多人合并画像 → 三选一 | llm（text） |
+| `party` | Partner（家里做场景） | 多人合并画像 → 三选一 | llm（text） |
 | `chat` | RecommendDetail | 追问 | llm（text） |
-| `agent` | Agent.vue | 自然语言入口：LLM 自主选工具并汇总回复，返回 `{reply, trace, ...最后一个工具的结构化数据}` | llm（多轮 tool calling） |
+| `agent` | Agent.vue | 自然语言入口：LLM 自主选工具并汇总回复，返回 `{reply, trace, ...最后一个工具的结构化数据}`；支持多轮 `history` | llm（多轮 tool calling） |
 | `communityRegister` | Partner | 创建身份，生成邀请码 | redis（未配置→mock） |
 | `communityAddFriend` | Partner | 邀请码加好友（双向） | redis |
 | `communityFriends` | Partner | 拉好友列表 | redis |
-| `communityPost` | Partner | 发布晒饭动态 | redis |
+| `communityGetProfiles` | Partner / Agent | 拉好友共享的口味画像（过敏/忌口/菜系/辣度/讨厌） | redis |
+| `communityShareProfile` | Partner | 开关共享我的口味给好友（不含生日/体重/日记） | redis |
+| `communityPost` | Partner / Confirm / Feedback | 发布晒饭动态（记录后可选分享也走这里） | redis |
 | `communityFeed` | Partner | 拉取好友+自己的动态流 | redis |
+
+**安全硬过滤**：`recommend` / `recommendHome` / `recommendGroup` / `party` 的返回在 `lib/runtime/safetyFilter.js` 做代码层二次过滤——我自己与所有成员的过敏/忌口命中的卡直接剔除（不评分降权），忌口剥"不吃/不要"等前缀匹配，泛称过敏原（海鲜/坚果/乳制品…）按别名表展开。被剔除项记录在 `meta.excludedBySafety`。
 
 ### 4.3.1 Food Agent（`action: 'agent'`）
 
@@ -185,15 +191,15 @@ userText + memory(画像/近期日记/今日状态/常吃店铺/定位) + 可选
 { ok, source: 'llm', data: { ...lastToolData, reply, trace } }
 ```
 
-12 个工具（`lib/runtime/skills.js`）：
+16 个工具（`lib/runtime/skills.js`）：
 
 | 类型 | 工具 |
 | --- | --- |
-| 生成 | `meal_recommend` / `meal_nutrition` / `meal_party` / `meal_recognize` / `meal_fridge`（识别照片）/ `meal_ingredients` |
-| 读 | `meal_memory`（按日期/餐次查日记）/ `meal_fridge_inventory` / `meal_expiring_foods` |
-| 写（只提议） | `meal_add_meal_log` / `meal_add_fridge_item` / `meal_remove_fridge_item` |
+| 生成 | `meal_recommend`（外出/一般）/ `meal_recommend_home`（在家做·冰箱临期优先）/ `meal_recommend_group`（和朋友出去吃）/ `meal_nutrition` / `meal_party`（家里做聚餐）/ `meal_recognize` / `meal_fridge`（识别照片）/ `meal_ingredients` |
+| 读 | `meal_memory`（按日期/餐次查日记）/ `meal_fridge_inventory` / `meal_expiring_foods` / `meal_friends`（好友共享口味）/ `meal_nearby_restaurants`（附近餐厅） |
+| 写（只提议） | `meal_add_meal_log`（支持 `date` 补录"昨天/前天/具体日期"）/ `meal_add_fridge_item` / `meal_remove_fridge_item` |
 
-重数据（profile、recentDiary、fridge…）由 orchestrator 注入 context，模型只传最小参数；`trace` 记录实际调用的工具，供评估使用。
+重数据（profile、recentDiary、fridge、friends…）由 orchestrator 注入 context，模型只传最小参数；`trace` 记录实际调用的工具，供评估使用。**多轮对话**：前端把最近 8 轮 `history`（user/assistant 文本）随请求带上，orchestrator 注入为带"（历史）"标记的消息，支持"还是不行/换个方向"这类追问。
 
 **写工具永远不直接写数据**：服务端无状态、数据在浏览器 localStorage，所以写工具只返回 `pendingAction`，由 orchestrator 收进 `data.pendingActions[]`（所有出口——正常结束 / 步数耗尽 / LLM 出错——都带上）。前端 `Agent.vue` 渲染确认卡，用户点「确认」后由 `src/services/agentActions.js` 调 `store.js` 落库：
 
@@ -481,7 +487,7 @@ printf '%s' "deepseek-chat" | npx vercel env add LLM_TEXT_MODEL production
 
 ---
 
-## 十一、当前进度（对照 [v2.md](./v2.md)，更新于 2026-10-03）
+## 十一、当前进度（对照 [v2.md](./v2.md)，更新于 2026-10-05）
 
 ### 11.1 V2 五个阶段
 
@@ -489,9 +495,9 @@ printf '%s' "deepseek-chat" | npx vercel env add LLM_TEXT_MODEL production
 | --- | --- | --- |
 | Phase 1 · IA 重构 | ✅ 基本完成 | 五 Tab（今日/冰箱/日记/饭搭子/我的）；首页两大入口（在家做 / 出去吃 + 记录这一餐）；Party/Community 合并为 Partner |
 | Phase 2 · 持久化冰箱 | ✅ 完成 | 三区库存、`shelfLife.js` 确定性新鲜度、拍/手动/告诉 Agent 录入、增删改；「用它做点什么」默认预选临期食材、排除已过期的（用户能否手动勾选过期食材未做硬限制） |
-| Phase 3 · 决策分支 | 🟡 部分 | 「用它做点什么」走 `ingredients` 单独生成；**尚未**拆出 `recommendHome / recommendEatingOut / recommendGroup` 三个独立推荐；冰箱食材的临期优先级未传入 `recommend` |
-| Phase 4 · 记录闭环 | 🟡 部分 | 在家做完成 → 写日记 + 扣减库存 ✅；拍照走 Confirm 确认 ✅；Agent 记录一餐走确认卡 ✅；今日页手动记录直接入日记，**无统一确认页**；**无「是否分享给好友」**一步 |
-| Phase 5 · Global Agent | 🟡 进行中 | `/agent` 页 + 12 个工具（含冰箱读取、记录/增删冰箱的**待确认**写工具）+ 21 条评估用例；**仍不是**全局悬浮层（仅今日页有入口）；无好友画像 / 附近餐厅读取工具；**无对话历史**（每次请求只带当前一句） |
+| Phase 3 · 决策分支 | ✅ 完成 | 拆出 `recommendHome`（冰箱临期优先 + 已有/还缺，过期剥离）/ `recommendGroup`（成员画像合并硬排除 + 附近餐厅）+ 原 `recommend`（出去吃）三路；Today「在家做」直达带冰箱上下文的推荐，「出去吃」先问自己/朋友；聚餐餐厅场景走 `recommendGroup` |
+| Phase 4 · 记录闭环 | ✅ 基本完成 | 拍照/手动/Agent 三入口统一进 Confirm 确认（手动记录也走确认页，估算结果预填）；确认页支持补录日期（今天/昨天/前天/自选）；保存后可选「分享给饭搭子」（Confirm 与 Feedback 两处）；在家做完成 → 写日记 + 扣减库存 ✅；Agent 记录一餐走确认卡并支持指定日期 ✅ |
+| Phase 5 · Global Agent | ✅ 基本完成 | 16 个工具（含在家做/聚餐推荐、好友口味、附近餐厅读取，写工具全部待确认）+ 多轮对话历史（近 8 轮）+ 全局悬浮入口（App 层，任意页面唤起）+ 拒绝确认卡后就地修改（取消卡内输入补充说明重新生成）+ 25 条本地单测（工具路由评估 `eval/` 仍需部署后跑线上验证） |
 
 ### 11.2 其他已完成
 - 首次注册流（品牌 + 基础 + 口味）；三种年龄模式；过敏原/忌口自定义
@@ -501,16 +507,17 @@ printf '%s' "deepseek-chat" | npx vercel env add LLM_TEXT_MODEL production
 - 三选一推荐 + 换一批（refineHint）+ 详情追问 + 饭后反馈
 - 饮食日记（本周种类数 + 每日热量柱状图 + 每餐编辑/删除）
 - 画像导出/导入（`MEAL1:`）；聚餐方案；邀请码好友 + 晒饭动态（Upstash Redis）
+- **口味共享（Q4）**：Partner 一键开关共享我的口味（只含过敏/忌口/菜系/辣度/讨厌，不碰生日/体重/日记）；好友列表显示共享画像摘要并可「加入聚餐」一键预填；Agent 可通过 `meal_friends` 读取
+- **临时添加一起吃的人（Q4）**：聚餐成员支持任意临时称呼（如"妈妈"）+ 独立配置过敏/忌口，无需注册
 - LLM 供应商切换（OpenAI 兼容，默认智谱 BigModel）
 - Agent 评估框架（`eval/`，本地 + 线上两套执行器）
 - 架构 P0 修复：`clearAll()` 补漏 `meal_nutrition` 并以 `ALL_KEYS` 集中登记；日期键统一 `YYYY-MM-DD`；`guessMeal` 抽成共享模块
 
 ### 11.3 已知缺口 / 下一步（按 v2.md 验收 Q1–Q7）
-- **Q4 朋友画像**：好友之间尚未共享 Food Profile（过敏/忌口/菜系…），也没有「临时添加一起吃的人」→ 聚餐仍靠粘贴 `MEAL1:` 文本合并画像
-- **Q6 Agent 全能**：写工具 + 确认卡已完成；还差好友画像 / 附近餐厅读取、对话历史（澄清后用户的回答目前接不上上文）、全局悬浮入口。**写工具的路由准确度尚未对真实 LLM 验证**——需部署后跑 `node eval/run-http.mjs`（尤其注意 c8「记一下热量」可能在 `meal_recognize` 与 `meal_add_meal_log` 之间摇摆）
-- **已知未处理**：记录一餐不支持指定日期（「昨天晚饭吃了…」会记到今天）；拒绝确认卡后无法就地修改（需重新说一次）
-- **Q5 记录一次即三用**：补统一 Meal Confirmation + 可选分享到 Feed
-- **Safety Hard Filter**：过敏/忌口/过期食材目前主要靠 System Prompt 约束，v2.md 要求在代码层二次硬过滤（尤其聚餐）
+- **Safety Hard Filter 已落地代码层**（`safetyFilter.js`，recommend/recommendHome/recommendGroup/party 四路生效，单测覆盖），但匹配是子串+别名表，复杂表述（"我对芒果过敏"但卡片只写"泰式咖喱"）仍可能漏过——LLM 层约束仍是第一道防线，两层叠加使用
+- **Agent 工具路由准确度尚未对真实 LLM 验证**——需部署后跑 `node eval/run-http.mjs`（新增 c8 类「记一下热量」与 home/group 推荐路由都值得重点看）；评估用例尚未覆盖 `meal_recommend_home` / `meal_recommend_group` / `meal_friends` / `meal_nearby_restaurants` / 多轮 history
+- **Q5 分享闭环**：确认页与反馈页都已接「分享给饭搭子」，但分享内容只有文字（菜品列表），照片分享未做
+- 补录日期只支持"昨天/前天/大前天/具体日期"（近 30 天内），"上周三"这类相对表述未覆盖
 - 架构审计里的 P1/P2 项（组件拆分、统一状态层等）**尚未处理**，本轮只做了 P0
 
 **未做，但预留了接入点**

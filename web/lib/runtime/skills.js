@@ -2,8 +2,9 @@
 // 由 lib/runtime/orchestrator.js 消费；runner 来自 lib/runtime/runners.js。
 
 import {
-  runRecommend, runDailyNutrition, runParty, runRecognizeMeal, runFridgeToRecipe,
-  runIngredients, runMealMemory
+  runRecommend, runRecommendHome, runRecommendGroup, runDailyNutrition, runParty,
+  runRecognizeMeal, runFridgeToRecipe, runIngredients, runMealMemory,
+  runFriendsList, runNearbyRestaurants
 } from './runners.js'
 import { runFridgeInventory, runExpiringFoods } from './fridgeTools.js'
 import { buildAddMealLog, buildAddFridgeItems, buildRemoveFridgeItem } from './agentActions.js'
@@ -17,6 +18,38 @@ const AGENT_TOOL_INPUTS = {
       note: { type: 'string', description: '可选：用户本次额外诉求，如"家里有鸡蛋西兰花面条"' }
     }
   },
+  meal_recommend_home: {
+    type: 'object',
+    properties: {
+      note: { type: 'string', description: '可选：用户本次额外诉求，如"想吃辣一点的"' }
+    }
+  },
+  meal_recommend_group: {
+    type: 'object',
+    properties: {
+      members: {
+        type: 'array',
+        description: '一起吃饭的所有人（必须包含我自己）。好友的口味先用 meal_friends 查询',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: '称呼，如"我""Amy"' },
+            isMe: { type: 'boolean', description: '是否是用户本人' },
+            allergies: { type: 'array', items: { type: 'string' } },
+            taboos: { type: 'array', items: { type: 'string' } },
+            cuisines: { type: 'array', items: { type: 'string' } },
+            spicy: { type: 'number', description: '辣度 0~3' },
+            dislikes: { type: 'string', description: '讨厌的东西' }
+          },
+          required: ['name']
+        }
+      },
+      budget: { type: 'string', description: '可选：人均预算，如"人均 60 元"' },
+      note: { type: 'string', description: '可选：本次聚餐的额外要求' }
+    }
+  },
+  meal_friends: { type: 'object', properties: {} },
+  meal_nearby_restaurants: { type: 'object', properties: {} },
   meal_nutrition: {
     type: 'object',
     properties: {
@@ -62,6 +95,7 @@ const AGENT_TOOL_INPUTS = {
     type: 'object',
     properties: {
       meal: { type: 'string', enum: ['早餐', '午餐', '加餐', '晚餐', '夜宵'], description: '可选：餐次；用户没说就不要传' },
+      date: { type: 'string', description: '可选：这餐是哪天吃的，如"昨天""前天""2026-09-30"；用户没提日期就不要传' },
       items: {
         type: 'array',
         description: '用户吃了的每一项菜品',
@@ -110,9 +144,33 @@ const AGENT_TOOL_INPUTS = {
 const SKILL_REGISTRY = [
   {
     name: 'meal_recommend',
-    description: '生成单人"三选一"餐食推荐（最合适/最想吃/最省事），结合画像与今日状态。当用户需要"决定这餐吃什么"时调用。',
+    description: '生成单人"三选一"餐食推荐（最合适/最想吃/最省事），结合画像与今日状态。当用户需要"决定这餐吃什么"（外出/一般场景）时调用。',
     input: AGENT_TOOL_INPUTS.meal_recommend,
     runner: runRecommend
+  },
+  {
+    name: 'meal_recommend_home',
+    description: '在家做饭推荐：优先消耗冰箱临期食材，给出"已有食材/还缺什么"。冰箱清单已注入上下文，无需参数。当用户想"在家做/用冰箱里的东西做饭"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_recommend_home,
+    runner: runRecommendHome
+  },
+  {
+    name: 'meal_recommend_group',
+    description: '和朋友一起吃的推荐（含附近餐厅）。先调 meal_friends 拿好友口味，再把所有成员（含我自己）传进 members。当用户和朋友/某人一起出去吃时调用。',
+    input: AGENT_TOOL_INPUTS.meal_recommend_group,
+    runner: runRecommendGroup
+  },
+  {
+    name: 'meal_friends',
+    description: '读取用户好友列表及他们共享的口味画像（过敏/忌口/菜系/辣度）。当用户提到"和朋友一起吃"或问"某某能吃什么"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_friends,
+    runner: runFriendsList
+  },
+  {
+    name: 'meal_nearby_restaurants',
+    description: '查询用户附近的餐厅（需用户已授权定位，未授权会返回提示）。当用户想出去吃并关心"附近/离我近"时调用。',
+    input: AGENT_TOOL_INPUTS.meal_nearby_restaurants,
+    runner: runNearbyRestaurants
   },
   {
     name: 'meal_nutrition',

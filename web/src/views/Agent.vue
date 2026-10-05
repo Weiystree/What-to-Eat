@@ -47,7 +47,12 @@
               </div>
 
               <div v-if="states[a.id].status === 'done'" class="act-result ok">✓ {{ states[a.id].message }}</div>
-              <div v-else-if="states[a.id].status === 'cancelled'" class="act-result">已取消，没有做任何改动</div>
+              <div v-else-if="states[a.id].status === 'cancelled'" class="redo-row">
+                <div class="act-result">已取消，没有做任何改动</div>
+                <input class="redo-input" v-model="states[a.id].redoText"
+                       placeholder="想改成什么？回车重新告诉 Agent"
+                       @keyup.enter="redoAction(m, a)" />
+              </div>
               <template v-else>
                 <div v-if="states[a.id].status === 'error'" class="act-result err">{{ states[a.id].message }}</div>
                 <div class="act-buttons">
@@ -106,9 +111,9 @@ import { ref, reactive, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   getProfile, getDiary, getTodayContext, getDeliveryStores,
-  getSavedLocation, deriveAgeMode, getFridgeSnapshot
+  getSavedLocation, deriveAgeMode, getFridgeSnapshot, getCommunityMe
 } from '../services/store.js'
-import { agent } from '../services/agent.js'
+import { agent, communityGetProfiles } from '../services/agent.js'
 import { commitAction, describeAction } from '../services/agentActions.js'
 import { STORAGE_ZONES } from '../services/shelfLife.js'
 
@@ -117,6 +122,8 @@ const draft = ref('')
 const sending = ref(false)
 const messages = ref([])
 const chatEl = ref(null)
+// Phase 5 对话历史：发给 orchestrator 供模型理解指代（"还是不行""换个方向"）
+const history = ref([])
 
 const suggestions = [
   '今天不知道吃什么',
@@ -126,8 +133,19 @@ const suggestions = [
   '我们三个人聚餐吃什么'
 ]
 
-function buildMemory() {
+async function buildMemory() {
   const profile = getProfile()
+  // 好友共享口味（v2.md Q4）：已共享的好友画像注入 memory.friends，供聚餐/好友相关工具使用
+  let friends = []
+  const me = getCommunityMe()
+  if (me && me.code) {
+    try {
+      const r = await communityGetProfiles({ meCode: me.code })
+      if (r && r.ok && r.data && Array.isArray(r.data.friends)) {
+        friends = r.data.friends.filter(f => f && f.share)
+      }
+    } catch (e) { /* 拉不到就当没有好友画像 */ }
+  }
   return {
     profile,
     ageMode: deriveAgeMode(profile),
@@ -135,7 +153,8 @@ function buildMemory() {
     todayContext: getTodayContext(),
     recentStores: getDeliveryStores(5),
     location: getSavedLocation(),
-    fridge: getFridgeSnapshot()
+    fridge: getFridgeSnapshot(),
+    friends
   }
 }
 
@@ -151,12 +170,12 @@ async function send(text) {
   sending.value = true
   messages.value.push({ text, loading: true })
   scrollDown()
-  const r = await agent({ userText: text, memory: buildMemory() })
+  const r = await agent({ userText: text, memory: await buildMemory(), history: history.value })
   const data = (r && r.ok && r.data) ? r.data : { reply: '（回答失败，请重试）' }
   // 先初始化每张确认卡的状态，再让模板渲染它们（模板里直接读 states[a.id]）
   ;(data.pendingActions || []).forEach(a => {
     states[a.id] = {
-      status: 'idle', message: '',
+      status: 'idle', message: '', redoText: '',
       selectedId: a.candidates && a.candidates.length === 1 ? a.candidates[0].id : ''
     }
   })
@@ -164,7 +183,18 @@ async function send(text) {
   last.loading = false
   last.data = data
   sending.value = false
+  // 当前这轮进入历史（不含本轮的请求，orchestrator 只收之前的轮次）
+  history.value.push({ role: 'user', text })
+  history.value.push({ role: 'assistant', text: data.reply || '（已在上方卡片中给出）' })
+  if (history.value.length > 8) history.value = history.value.slice(-8)
   scrollDown()
+}
+
+// 拒绝确认卡后就地修改：把补充说明拼回上一句重新提问
+function redoAction(m, a) {
+  const t = (states[a.id].redoText || '').trim()
+  if (!t) return
+  send(`${m.text}（改为：${t}）`)
 }
 
 // —— 待确认动作（确认卡）——
@@ -320,6 +350,16 @@ onMounted(() => {
 .act-result.err { color: #a04a3a; }
 .agent-note { font-size: 12px; color: #a89684; padding-left: 4px; }
 .agent-note summary { cursor: pointer; }
+
+/* 拒绝后就地修改 */
+.redo-row { margin-top: 4px; }
+.redo-input {
+  width: 100%; box-sizing: border-box; margin-top: 8px;
+  padding: 10px 14px; border-radius: 100px;
+  border: 1px solid rgba(196, 106, 58, 0.35);
+  background: #fff; font-size: 13px; outline: none; font-family: inherit;
+}
+.redo-input:focus { border-color: #c46a3a; }
 
 .trace { font-size: 11px; color: #c3b6a6; align-self: flex-start; padding-left: 4px; }
 

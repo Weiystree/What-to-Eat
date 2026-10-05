@@ -8,7 +8,8 @@
 //   均只在 Vercel 环境变量配置，绝不硬编码。
 
 import {
-  runRecognizeMeal, runRecommend, runDailyNutrition, runParty, runFridgeToRecipe, runChat,
+  runRecognizeMeal, runRecommend, runRecommendHome, runRecommendGroup,
+  runDailyNutrition, runParty, runFridgeToRecipe, runChat,
   runFridgeItems, runIngredients
 } from '../lib/runtime/runners.js'
 import { runAgent } from '../lib/runtime/orchestrator.js'
@@ -16,6 +17,8 @@ import { runAgent } from '../lib/runtime/orchestrator.js'
 const RUNNERS = {
   recognizeMeal: runRecognizeMeal,
   recommend: runRecommend,
+  recommendHome: runRecommendHome,
+  recommendGroup: runRecommendGroup,
   dailyNutrition: runDailyNutrition,
   party: runParty,
   fridgeToRecipe: runFridgeToRecipe,
@@ -40,9 +43,60 @@ export default async function handler(req, res) {
     }
 
     if (action === 'agent') {
-      const { userText, memory, imageDataUrl } = payload || {}
+      const { userText, memory, imageDataUrl, history } = payload || {}
       if (!userText) return res.status(200).json({ ok: false, error: 'missing_userText' })
-      return res.status(200).json(await runAgent(userText, memory, imageDataUrl))
+      return res.status(200).json(await runAgent(userText, memory, imageDataUrl, { history }))
+    }
+
+    if (action === 'communityShareProfile') {
+      const p = payload || {}
+      const meCode = String(p.meCode || '').toUpperCase().trim()
+      const redis = await getRedis()
+      if (!redis) return res.status(200).json({ ok: true, source: 'mock', data: { shared: !!p.share } })
+      try {
+        const raw = await redis.get(uKey(meCode))
+        if (!raw) return res.status(200).json({ ok: false, error: '身份不存在' })
+        const me = JSON.parse(raw)
+        // Food Profile Sharing（v2.md #20）：只共享口味与安全项，不碰 birthYear/体重/日记
+        me.share = p.share ? {
+          allergies: (Array.isArray(p.share.allergies) ? p.share.allergies : []).slice(0, 10),
+          taboos: (Array.isArray(p.share.taboos) ? p.share.taboos : []).slice(0, 10),
+          cuisines: (Array.isArray(p.share.cuisines) ? p.share.cuisines : []).slice(0, 10),
+          spicy: p.share.spicy,
+          dislikes: String(p.share.dislikes || '').slice(0, 100),
+          healthPrefs: (Array.isArray(p.share.healthPrefs) ? p.share.healthPrefs : []).slice(0, 10)
+        } : null
+        await redis.set(uKey(meCode), JSON.stringify(me))
+        return res.status(200).json({ ok: true, source: 'redis', data: { shared: !!p.share } })
+      } catch (e) {
+        console.error('[community] shareProfile error:', e.message)
+        return res.status(200).json({ ok: false, error: '共享失败' })
+      }
+    }
+
+    if (action === 'communityGetProfiles') {
+      const meCode = String((payload || {}).meCode || '').toUpperCase().trim()
+      const redis = await getRedis()
+      if (!redis) {
+        const f = MOCK_COMMUNITY.friend
+        return res.status(200).json({ ok: true, source: 'mock', data: { me: { share: null }, friends: [{ code: f.code, name: f.name, emoji: f.emoji, share: null }] } })
+      }
+      try {
+        const meRaw = await redis.get(uKey(meCode))
+        const me = meRaw ? JSON.parse(meRaw) : null
+        const codes = await redis.smembers(fKey(meCode))
+        const friends = []
+        for (const c of codes) {
+          const raw = await redis.get(uKey(c))
+          if (!raw) continue
+          const u = JSON.parse(raw)
+          friends.push({ code: u.code, name: u.name, emoji: u.emoji, share: u.share || null })
+        }
+        return res.status(200).json({ ok: true, source: 'redis', data: { me: { share: (me && me.share) || null }, friends } })
+      } catch (e) {
+        console.error('[community] getProfiles error:', e.message)
+        return res.status(200).json({ ok: true, source: 'mock', data: { me: { share: null }, friends: [] } })
+      }
     }
 
     if (action === 'communityRegister') {

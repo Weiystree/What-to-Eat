@@ -170,12 +170,31 @@
         </div>
         <input class="input" v-model="manualText" placeholder="例如：一碗米饭、红烧鸡肉、炒青菜" />
         <div v-if="estimatingManual" class="subtitle" style="margin-top: 8px;">识别中，请稍候…</div>
-        <button class="btn-primary" style="margin-top:16px;" :disabled="estimatingManual" @click="saveManualEntry">保存</button>
+        <button class="btn-primary" style="margin-top:16px;" :disabled="estimatingManual" @click="saveManualEntry">下一步：确认</button>
       </div>
     </div>
 
-    <!-- Agent 入口悬浮按钮 -->
-    <button class="agent-fab" @click="goAgent" aria-label="问问 NextMeal">✨ 问问 NextMeal</button>
+    <!-- 出去吃：和谁一起（v2.md #16 决策分支） -->
+    <div v-if="showOutSheet" class="mask" @click.self="showOutSheet = false">
+      <div class="sheet">
+        <div class="sheet-head">
+          <span>出去吃，和谁一起？</span>
+          <button class="close" @click="showOutSheet = false">×</button>
+        </div>
+        <div class="dual-row" style="margin-top:0;">
+          <div class="dual-btn" @click="goOutAlone">
+            <div class="dual-icon">🙋</div>
+            <div class="dual-label">我自己</div>
+            <div class="dual-desc">结合定位和口味找附近好吃的</div>
+          </div>
+          <div class="dual-btn" @click="goOutWithFriends">
+            <div class="dual-icon">👫</div>
+            <div class="dual-label">和朋友</div>
+            <div class="dual-desc">合并大家的口味出方案</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -185,12 +204,12 @@ import { useRouter } from 'vue-router'
 import {
   getProfile, getDiary, getTodayContext, setTodayContext,
   deriveAgeMode, setPending, getDeliveryStores,
-  getSavedLocation, requestGeolocation, appendDiary,
+  getSavedLocation, requestGeolocation,
   getCachedNutrition, setCachedNutrition,
   getExpiringFoods, formatDateKey
 } from '../services/store.js'
 import { recognizeMeal, dailyNutrition, estimateMeal } from '../services/agent.js'
-import { guessMeal, guessNextMeal } from '../services/mealTime.js'
+import { guessNextMeal } from '../services/mealTime.js'
 
 const router = useRouter()
 const ctx = reactive({
@@ -208,6 +227,7 @@ const reminder = ref('')
 const capturing = ref(false)
 const estimatingManual = ref(false)
 const showPrefs = ref(false)
+const showOutSheet = ref(false)
 
 const nutrition = ref(null)
 const nutritionLoading = ref(false)
@@ -338,17 +358,30 @@ function onSnapPhoto(e) {
   })
 }
 
-// 在家做：直接进冰箱页（查看/录入食材 + 用它做点什么）
+// 在家做（Phase 3）：直接基于已保存的冰箱清单生成推荐，不要求重新拍冰箱（v2.md Q2）
 function onHomeCook() {
-  router.push('/fridge')
+  ctx.scene = '在家'
+  saveCtx()
+  sessionStorage.setItem('meal_force_refresh', '1')
+  router.push({ path: '/recommend', query: { mode: 'home' } })
 }
 
-// 出去吃：跳推荐页
+// 出去吃：先问和谁吃（我自己 → 带定位推荐；和朋友 → 饭搭子页合并画像）
 function onSceneOut() {
+  showOutSheet.value = true
+}
+function goOutAlone() {
+  showOutSheet.value = false
   ctx.scene = '餐厅'
   saveCtx()
   sessionStorage.setItem('meal_force_refresh', '1')
   router.push('/recommend')
+}
+function goOutWithFriends() {
+  showOutSheet.value = false
+  ctx.scene = '餐厅'
+  saveCtx()
+  router.push({ path: '/partner', query: { party: '1' } })
 }
 
 function goAgent() {
@@ -429,6 +462,7 @@ function saveCtx() {
 function saveNote() {
   saveCtx()
 }
+// 手动记录也走统一确认页（Phase 4 · v2.md #24）：估算结果预填进 Confirm，用户确认后才入日记
 async function saveManualEntry() {
   const text = manualText.value.trim()
   if (!text) { alert('请输入吃了什么'); return }
@@ -443,11 +477,10 @@ async function saveManualEntry() {
     // 网络/识别失败：保留上面的兜底 items
   }
   estimatingManual.value = false
-  appendDiary({
-    items, meal: guessMeal(), confirmed: false, awaitingFeedback: false
-  })
+  setPending('recognize', { items, manual: true })
   manualText.value = ''
   showManualEntry.value = false
+  router.push('/capture/confirm')
 }
 async function loadNutrition() {
   nutritionLoading.value = true
@@ -741,30 +774,5 @@ function compressToDataUrl(file) {
   color: #4a7a4a; font-size: 13px; text-align: center;
 }
 
-/* ===== Agent 入口悬浮按钮 ===== */
-.agent-fab {
-  position: fixed;
-  right: 20px;
-  bottom: calc(96px + env(safe-area-inset-bottom, 0));
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 18px;
-  border-radius: 100px;
-  border: none;
-  background: linear-gradient(135deg, #c46a3a 0%, #d4895a 100%);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  box-shadow: 0 4px 16px rgba(196, 106, 58, 0.30);
-  cursor: pointer;
-  transition: transform 140ms ease, box-shadow 140ms ease;
-  -webkit-tap-highlight-color: transparent;
-}
-.agent-fab:active {
-  transform: scale(0.95);
-  box-shadow: 0 2px 8px rgba(196, 106, 58, 0.32);
-}
+/* ===== Agent 入口悬浮按钮（已提升为全局，见 App.vue） ===== */
 </style>

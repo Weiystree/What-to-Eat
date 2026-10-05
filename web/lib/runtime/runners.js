@@ -3,6 +3,7 @@
 
 import { callLLM, MOCK } from './llm.js'
 import { fetchNearbyRestaurants } from './places.js'
+import { collectHardExclusions, hardFilterPicks } from './safetyFilter.js'
 
 export async function runRecognizeMeal(payload) {
   const { imageDataUrl, textDescription, ...ctx } = payload || {}
@@ -23,6 +24,16 @@ export async function runRecognizeMeal(payload) {
     }
   } catch (e) { console.error('recognizeMeal llm error:', e.message) }
   return { ok: true, source: 'mock', data: MOCK.recognizeMeal }
+}
+
+// 代码层安全硬过滤（v2.md #34）：过敏/忌口命中的卡直接剔除，不依赖 LLM 自觉。
+// 同时覆盖我自己（profile.basic）和聚餐成员（members[]）的硬排除项。
+function applyHardFilter(data, payload) {
+  const exclusions = collectHardExclusions(payload || {})
+  if (!exclusions.length || !data || !Array.isArray(data.picks)) return { excluded: [] }
+  const { excluded } = hardFilterPicks(data.picks, exclusions)
+  data.picks = data.picks.filter(p => !excluded.some(e => e.key === p.key && e.dish === (p.dish || '')))
+  return { excluded }
 }
 
 export async function runRecommend(payload) {
@@ -112,9 +123,10 @@ export async function runRecommend(payload) {
         typicalDishes: p.typicalDishes,
         mapsUrl: p.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + p.placeId : null
       })).filter(l => l.mapsUrl)
+      const { excluded } = applyHardFilter(data, payload)
       return {
         ok: true, source: 'llm', data,
-        meta: { nearbyPlacesCount: (enriched.nearbyPlaces || []).length, nearbyLinks }
+        meta: { nearbyPlacesCount: (enriched.nearbyPlaces || []).length, nearbyLinks, excludedBySafety: excluded }
       }
     }
   } catch (e) { console.error('recommend llm error:', e.message) }
@@ -145,10 +157,147 @@ export async function runParty(payload) {
       'party'
     )
     if (data && Array.isArray(data.picks)) {
-      return { ok: true, source: 'llm', data }
+      const { excluded } = applyHardFilter(data, payload)
+      return { ok: true, source: 'llm', data, meta: { excludedBySafety: excluded } }
     }
   } catch (e) { console.error('party llm error:', e.message) }
   return { ok: true, source: 'mock', data: MOCK.party }
+}
+
+// ===== Phase 3 · 决策分支（v2.md #33）：home / eating-out / group 三路推荐 =====
+
+// 在家做（v2.md #14）：冰箱库存 + 临期优先 + 已有/还缺。复用 recommend schema（uses/missing 字段）。
+// homeContext 由前端组装：available=冰箱快照，expiring=临期食材；过期食材在这里被剥离，绝不进入推荐。
+export async function runRecommendHome(payload) {
+  const home = (payload && payload.homeContext) || {}
+  const notExpired = it => it && it.name && it.status !== 'expired'
+  const available = (Array.isArray(home.available) ? home.available : [])
+    .filter(notExpired)
+    .slice(0, 30)
+    .map(it => ({ name: it.name, quantity: it.quantity, unit: it.unit || '', status: it.status || 'fresh' }))
+  const expiring = (Array.isArray(home.expiring) ? home.expiring : [])
+    .filter(notExpired)
+    .filter(it => it.status === 'urgent' || it.status === 'use_soon')
+    .sort((a, b) => (a.daysLeft ?? 0) - (b.daysLeft ?? 0))
+    .slice(0, 10)
+    .map(it => ({ name: it.name, status: it.status, daysLeft: it.daysLeft }))
+  const base = slimRecommendPayload(payload || {})
+  base.homeContext = { available, expiring }
+  base.mode = 'home'
+  if (home.extra) base.todayContext = Object.assign({}, base.todayContext, { personalNote: home.extra })
+  if (!available.length) {
+    return { ok: true, source: 'mock', data: MOCK.recommend, meta: { note: '冰箱是空的，请先在冰箱页录入食材' } }
+  }
+  try {
+    const data = await callLLM(base, 'recommend', { temperature: 0.4 })
+    if (data && Array.isArray(data.picks) && data.picks.length) {
+      const { excluded } = applyHardFilter(data, payload)
+      return { ok: true, source: 'llm', data, meta: { excludedBySafety: excluded } }
+    }
+  } catch (e) { console.error('recommendHome llm error:', e.message) }
+  return { ok: true, source: 'mock', data: MOCK.recommend }
+}
+
+// 和朋友出去吃（v2.md #19）：成员画像合并硬排除 + 定位附近餐厅。复用 party schema。
+// 成员来源：模型传 members（Agent 场景）或前端直接传；都没有时用客户端注入的 friends + 我的画像兜底。
+export async function runRecommendGroup(payload) {
+  let members = (Array.isArray(payload && payload.members) ? payload.members : [])
+    .filter(m => m && (m.name || m.isMe))
+  if (!members.length) {
+    const me = (payload && payload.profile) || {}
+    members = [{
+      name: '我', isMe: true,
+      allergies: (me.basic && me.basic.allergies) || [],
+      taboos: (me.basic && me.basic.taboos) || [],
+      cuisines: (me.prefer && me.prefer.cuisines) || [],
+      spicy: me.prefer && me.prefer.spicy,
+      dislikes: me.prefer && me.prefer.dislikes
+    }, ...((payload && Array.isArray(payload.friends)) ? payload.friends : [])]
+  }
+  if (!members.length) return { ok: true, source: 'mock', data: MOCK.party }
+  const enriched = slimRecommendPayload(payload || {})
+  enriched.members = members.slice(0, 8).map(m => ({
+    name: m.name || '', isMe: !!m.isMe,
+    allergies: m.allergies || [], taboos: m.taboos || [],
+    cuisines: m.cuisines || [], spicy: m.spicy,
+    dislikes: m.dislikes, healthPrefs: m.healthPrefs || []
+  }))
+  enriched.todayContext = Object.assign({}, enriched.todayContext, { scene: '餐厅' })
+  if (payload && payload.party && payload.party.budget) {
+    enriched.todayContext = Object.assign({}, enriched.todayContext, { budget: payload.party.budget })
+  }
+  const nearbyLinks = []
+  const loc = (payload && payload.location) || null
+  if (loc && loc.lat && loc.lng) {
+    try {
+      const places = await fetchNearbyRestaurants(loc, '餐厅')
+      if (places && places.length) {
+        const shuffled = [...places].sort(() => Math.random() - 0.5)
+        enriched.nearbyPlaces = shuffled.slice(0, 3).map(p => ({ name: p.name, placeId: p.placeId, dishes: p.typicalDishes }))
+        nearbyLinks.push(...places.slice(0, 6).map(p => ({
+          name: p.name, rating: p.rating, distanceMeters: p.distanceMeters,
+          mapsUrl: p.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + p.placeId : null
+        })).filter(l => l.mapsUrl))
+      }
+    } catch (e) { console.error('places api error (group):', e.message) }
+  }
+  try {
+    const data = await callLLM(
+      Object.assign({
+        task: '为"我和朋友出去吃"生成三选一。合并所有成员画像：找出共同可接受的菜系；任一人的过敏和忌口都硬排除；预算取平均；提供了 nearbyPlaces 时三张卡都要从这些店选（dish 格式"店名 · 菜品"）并回填 placeId。'
+      }, enriched),
+      'party',
+      { temperature: 0.5 }
+    )
+    if (data && Array.isArray(data.picks) && data.picks.length) {
+      const { excluded } = applyHardFilter(data, { profile: payload && payload.profile, members })
+      return { ok: true, source: 'llm', data, meta: { nearbyLinks, excludedBySafety: excluded } }
+    }
+  } catch (e) { console.error('recommendGroup llm error:', e.message) }
+  return { ok: true, source: 'mock', data: MOCK.party }
+}
+
+// 好友列表（含共享的 Food Profile）。好友数据在社区服务端，客户端拉好后放进 memory.friends；
+// 这里只过滤整形（敏感字段在共享端就已剥离），确定性、不调 LLM。
+export async function runFriendsList(payload) {
+  const friends = (Array.isArray(payload && payload.friends) ? payload.friends : [])
+    .filter(f => f && f.name)
+    .slice(0, 30)
+    .map(f => ({
+      code: f.code || '', name: f.name, emoji: f.emoji || '',
+      allergies: f.allergies || [], taboos: f.taboos || [],
+      cuisines: f.cuisines || [], spicy: f.spicy,
+      dislikes: f.dislikes || '', healthPrefs: f.healthPrefs || []
+    }))
+  return { ok: true, source: 'memory', data: { count: friends.length, friends } }
+}
+
+// 附近餐厅（Google Places）。定位由客户端放进 memory.location；未授权/无 Key/失败都静默退化。
+export async function runNearbyRestaurants(payload) {
+  const loc = payload && payload.location
+  if (!loc || !loc.lat || !loc.lng) {
+    return { ok: true, source: 'memory', data: { count: 0, places: [], note: '用户未授权定位，无法获取附近餐厅' } }
+  }
+  if (!process.env.GOOGLE_PLACES_API_KEY) {
+    return { ok: true, source: 'memory', data: { count: 0, places: [], note: '未配置 Places Key' } }
+  }
+  try {
+    const places = await fetchNearbyRestaurants(loc, '餐厅')
+    return {
+      ok: true, source: 'places',
+      data: {
+        count: places.length,
+        places: places.slice(0, 8).map(p => ({
+          name: p.name, rating: p.rating, distanceMeters: p.distanceMeters,
+          address: p.address, typicalDishes: p.typicalDishes,
+          mapsUrl: p.placeId ? 'https://www.google.com/maps/place/?q=place_id:' + p.placeId : null
+        }))
+      }
+    }
+  } catch (e) {
+    console.error('nearby places error:', e.message)
+    return { ok: true, source: 'memory', data: { count: 0, places: [], note: '附近餐厅查询失败' } }
+  }
 }
 
 export async function runFridgeToRecipe(payload) {

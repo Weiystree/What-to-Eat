@@ -94,3 +94,41 @@ describe('runAgent pendingActions', () => {
     expect(r.data.pendingActions).toBeUndefined()
   })
 })
+
+describe('runAgent conversation history (Phase 5)', () => {
+  it('replays recent turns before the current message', async () => {
+    callAgent.mockResolvedValueOnce(finalMsg('好的'))
+    await runAgent('还是不行', {}, null, {
+      history: [
+        { role: 'user', text: '帮我推荐晚餐' },
+        { role: 'assistant', text: '宫保鸡丁怎么样' },
+        { role: 'user', text: '不太想吃辣' },
+        { role: 'assistant', text: '那清蒸鱼呢' }
+      ]
+    })
+    const msgs = callAgent.mock.calls[0][0]
+    const contents = msgs.map(m => m.content)
+    expect(contents.some(c => c.includes('（历史）用户说：帮我推荐晚餐'))).toBe(true)
+    expect(contents.some(c => c.includes('那清蒸鱼呢'))).toBe(true)
+    // 当前这句是最后一条 user message
+    expect(msgs[msgs.length - 1].content).toContain('用户说：还是不行')
+  })
+
+  it('keeps at most 8 history messages', async () => {
+    callAgent.mockResolvedValueOnce(finalMsg('好的'))
+    const history = Array.from({ length: 10 }, (_, i) => ({ role: 'user', text: 't' + i }))
+    await runAgent('现在的', {}, null, { history })
+    const msgs = callAgent.mock.calls[0][0]
+    const histMsgs = msgs.filter(m => m.role === 'user' && String(m.content).startsWith('（历史）'))
+    expect(histMsgs).toHaveLength(8)
+  })
+
+  it('ignores malformed history entries and stays working without opts', async () => {
+    callAgent.mockResolvedValueOnce(finalMsg('好的'))
+    await runAgent('你好', {})
+    const msgs = callAgent.mock.calls[0][0]
+    expect(msgs.filter(m => m.role === 'user')).toHaveLength(1)
+    await runAgent('你好', {}, null, { history: [null, {}, { text: '   ' }] })
+    expect(callAgent.mock.calls[1][0]).toHaveLength(2) // system + 当前 user
+  })
+})

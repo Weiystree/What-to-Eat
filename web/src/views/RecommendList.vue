@@ -1,6 +1,9 @@
 <template>
   <div>
-    <p class="subtitle" v-if="loading">Agent 正在读取你的画像和今日状态…</p>
+    <p class="subtitle" v-if="loading">{{ mode === 'home' ? 'Agent 正在看你冰箱里的食材和临期提醒…' : 'Agent 正在读取你的画像和今日状态…' }}</p>
+    <p class="places-note" v-else-if="mode === 'home' && picks.length">
+      · 在家做 · 优先消耗临期食材，过期食材已排除
+    </p>
     <p class="places-note" v-else-if="nearbyUsed > 0">
       · 结合了附近 {{ nearbyUsed }} 家好评餐厅
     </p>
@@ -33,10 +36,20 @@
         <span v-for="a in (p.allergens || [])" :key="a" class="tag danger-tag">含 {{ a }}</span>
       </div>
       <p class="pick-reason">{{ p.reason }}</p>
+      <div v-if="(p.uses || []).length || (p.missing || []).length" class="row signature-row">
+        <span v-for="u in (p.uses || [])" :key="'u' + u" class="tag use-tag">✓ {{ u }}</span>
+        <span v-for="m in (p.missing || [])" :key="'m' + m" class="tag miss-tag">还缺 {{ m }}</span>
+      </div>
       <div v-if="(p.signatureDishes || []).length" class="row signature-row">
         <span v-for="d in p.signatureDishes" :key="d" class="tag">🍽 {{ d }}</span>
       </div>
       <a v-if="p.mapsUrl" :href="p.mapsUrl" target="_blank" class="maps-link" @click.stop>Google Maps 查看 →</a>
+    </div>
+
+    <div v-if="!loading && !picks.length" class="card">
+      <div class="q-title">没有生成推荐</div>
+      <p class="pick-reason" style="margin:0 0 14px;">{{ homeNote || '请稍后再试，或换个方向。' }}</p>
+      <button v-if="mode === 'home'" class="btn-ghost slim" @click="goFridge">去冰箱录入食材 →</button>
     </div>
 
     <div v-if="!loading" class="card refine">
@@ -61,20 +74,25 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import * as agent from '../services/agent.js'
 import {
   getProfile, getTodayContext, getDiary, setPending,
   setLastReco, getLastReco, deriveAgeMode, getDeliveryStores,
-  getSavedLocation, requestGeolocation
+  getSavedLocation, requestGeolocation,
+  getFridgeSnapshot, getExpiringFoods
 } from '../services/store.js'
 
 const router = useRouter()
+const route = useRoute()
+// Phase 3 决策分支：home = 在家做（冰箱临期优先）；out = 出去吃/一般
+const mode = ref(route.query.mode === 'home' ? 'home' : 'out')
 const picks = ref([])
 const loading = ref(true)
 const nearbyUsed = ref(0)
 const nearbyLinks = ref([])
 const refineText = ref('')
+const homeNote = ref('')
 
 const PRICE_LEVEL_LABELS = {
   PRICE_LEVEL_FREE: '免费',
@@ -87,33 +105,50 @@ function priceLevelLabel(level) {
   return PRICE_LEVEL_LABELS[level] || ''
 }
 
+// v2.md #14：在家做的数据源是持久化冰箱（含本地算好的新鲜度），不是重新拍冰箱
+function buildHomeContext() {
+  return {
+    available: getFridgeSnapshot(),
+    expiring: getExpiringFoods().map(f => ({ name: f.name, status: f.status, daysLeft: f.daysLeft }))
+  }
+}
+
 async function load(refineHint) {
   loading.value = true
+  homeNote.value = ''
   const profile = getProfile()
   const last = getLastReco()
   const todayCtx = getTodayContext()
-  const wantsPlaces = todayCtx && todayCtx.scene === '餐厅'
-  let loc = wantsPlaces ? getSavedLocation() : null
-  if (wantsPlaces && !loc) loc = await requestGeolocation()
-  const r = await agent.recommend({
+  const base = {
     profile,
     todayContext: todayCtx,
     recentDiary: getDiary().slice(0, 6),
     ageMode: deriveAgeMode(profile),
-    recentStores: getDeliveryStores(3),
-    location: loc,
     refineHint,
-    previousPicks: last ? last.picks : null,
+    previousPicks: last && last.mode === mode.value ? last.picks : null,
     seed: Math.floor(Math.random() * 100000)
-  })
+  }
+  let r
+  if (mode.value === 'home') {
+    r = await agent.recommendHome({ ...base, homeContext: buildHomeContext() })
+  } else {
+    const wantsPlaces = todayCtx && todayCtx.scene === '餐厅'
+    let loc = wantsPlaces ? getSavedLocation() : null
+    if (wantsPlaces && !loc) loc = await requestGeolocation()
+    r = await agent.recommend({ ...base, recentStores: getDeliveryStores(3), location: loc })
+  }
   loading.value = false
   if (r && r.ok) {
     picks.value = r.data.picks || []
     nearbyUsed.value = (r.meta && r.meta.nearbyPlacesCount) || 0
     nearbyLinks.value = (r.meta && r.meta.nearbyLinks) || []
+    if (mode.value === 'home' && !picks.value.length) {
+      homeNote.value = (r.meta && r.meta.note) || ''
+    }
     setLastReco({
       picks: picks.value, nearbyUsed: nearbyUsed.value,
-      nearbyLinks: nearbyLinks.value, refineHint, at: Date.now()
+      nearbyLinks: nearbyLinks.value, refineHint,
+      mode: mode.value, at: Date.now()
     })
   } else {
     alert('推荐失败')
@@ -123,6 +158,10 @@ async function load(refineHint) {
 function goDetail(idx) {
   setPending('pick', picks.value[idx])
   router.push('/recommend/detail')
+}
+
+function goFridge() {
+  router.push('/fridge')
 }
 
 function submitRefineText() {
@@ -141,7 +180,7 @@ onMounted(() => {
     return
   }
   const last = getLastReco()
-  if (last && last.picks && last.picks.length) {
+  if (last && last.mode === mode.value && last.picks && last.picks.length) {
     picks.value = last.picks
     nearbyUsed.value = last.nearbyUsed || 0
     nearbyLinks.value = last.nearbyLinks || []
@@ -173,6 +212,8 @@ onMounted(() => {
   box-shadow: 0 1px 4px rgba(74,52,40,0.08);
 }
 .signature-row { margin-top: 12px; }
+.use-tag { background: #e8f0e8; color: #4a7a4a; border-color: transparent; }
+.miss-tag { background: #fef0e8; color: #a87050; border-color: transparent; }
 .nearby-preview {
   margin-bottom: 24px;
   border: 1px solid rgba(168,150,132,0.18);

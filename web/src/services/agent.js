@@ -108,6 +108,19 @@ function localMock(action, payload) {
       }
     }
   }
+  if (action === 'recommendHome') {
+    const mock = localMock('recommend', payload)
+    return { ...mock, data: { ...mock.data, picks: mock.data.picks.map(p => ({ ...p, uses: ['鸡蛋', '西兰花'], missing: ['蒜'] })) } }
+  }
+  if (action === 'recommendGroup') {
+    return localMock('party', payload)
+  }
+  if (action === 'communityShareProfile') {
+    return { ok: true, source: 'local-mock', data: { shared: !!(payload && payload.share) } }
+  }
+  if (action === 'communityGetProfiles') {
+    return { ok: true, source: 'local-mock', data: { me: { share: null }, friends: [] } }
+  }
   if (action === 'communityRegister') {
     return { ok: true, source: 'local-mock', data: { me: { code: 'ME0001', name: (payload && payload.name) || '我', emoji: (payload && payload.emoji) || '😊' } } }
   }
@@ -132,6 +145,9 @@ function localMock(action, payload) {
 
 export const recognizeMeal = (payload) => invoke('recognizeMeal', payload)
 export const recommend = (payload) => invoke('recommend', payload)
+// Phase 3 决策分支：在家做（冰箱临期优先）/ 和朋友出去吃（成员画像合并）
+export const recommendHome = (payload) => invoke('recommendHome', payload)
+export const recommendGroup = (payload) => invoke('recommendGroup', payload)
 export const chat = (payload) => invoke('chat', payload)
 export const dailyNutrition = (payload) => invoke('dailyNutrition', payload)
 export const party = (payload) => invoke('party', payload)
@@ -143,6 +159,9 @@ export const communityAddFriend = (payload) => invoke('communityAddFriend', payl
 export const communityFriends = (payload) => invoke('communityFriends', payload)
 export const communityPost = (payload) => invoke('communityPost', payload)
 export const communityFeed = (payload) => invoke('communityFeed', payload)
+// Q4 Food Profile Sharing：共享/读取好友口味（只含过敏/忌口/菜系等，不含敏感数据）
+export const communityShareProfile = (payload) => invoke('communityShareProfile', payload)
+export const communityGetProfiles = (payload) => invoke('communityGetProfiles', payload)
 // 纯文字场景（手动记录/直接采纳推荐）估算 category/calories，底层复用 recognizeMeal
 export const estimateMeal = (payload) => invoke('recognizeMeal', payload)
 // Agent 运行时入口：自主编排（后端 action='agent'，由 orchestrator 决定调用哪些 Skill）

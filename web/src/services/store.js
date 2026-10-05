@@ -37,8 +37,10 @@ export function formatDateKey(ts) {
 export function appendDiary(entry) {
   const list = getDiary()
   const now = Date.now()
-  const date = formatDateKey(now)
-  list.unshift(Object.assign({ id: now, createdAt: now, date }, entry))
+  // 补录支持：条目可自带 createdAt（如"记录昨天晚饭"），日期键按它算
+  const ts = (entry && typeof entry.createdAt === 'number' && entry.createdAt <= now) ? entry.createdAt : now
+  const date = formatDateKey(ts)
+  list.unshift(Object.assign({ id: now, createdAt: ts, date }, entry))
   writeJSON(K_DIARY, list)
   return list
 }

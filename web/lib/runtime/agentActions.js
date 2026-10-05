@@ -34,7 +34,8 @@ function rejected(reason) {
   return { ok: true, source: 'pending', data: { status: 'rejected', reason } }
 }
 
-// 记录一餐：items 至少一项有名字；meal 非法则留空，由前端按当前时间推断
+// 记录一餐：items 至少一项有名字；meal 非法则留空，由前端按当前时间推断；
+// date 支持"昨天/前天/大前天/YYYY-MM-DD"（v2.md 已知缺口：不支持指定日期 → 已修）
 export async function buildAddMealLog(args) {
   const items = (Array.isArray(args && args.items) ? args.items : [])
     .map(it => ({ name: clean(it && it.name), portion: clean(it && it.portion) || '一份' }))
@@ -42,7 +43,28 @@ export async function buildAddMealLog(args) {
     .slice(0, MAX_ITEMS)
   if (!items.length) return rejected('没有可记录的菜品名称，请让用户说清楚吃了什么')
   const meal = MEALS.includes(args.meal) ? args.meal : null
-  return pending({ type: 'addMealLog', meal, items }, `记录${meal || '这一餐'}：${items.map(i => i.name).join('、')}`)
+  const { offset: dateOffset, label: dateLabel } = parseDateArg(args && args.date)
+  const summary = `记录${dateLabel ? dateLabel + '的' : ''}${meal || '这一餐'}：${items.map(i => i.name).join('、')}`
+  return pending({ type: 'addMealLog', meal, items, dateOffset }, summary)
+}
+
+// 解析模型的 date 参数：相对词 → 偏移天数；绝对日期 → 与今天的天数差（限近 30 天内）
+export function parseDateArg(raw) {
+  const s = clean(raw)
+  if (!s) return { offset: 0, label: '' }
+  if (/大前天/.test(s)) return { offset: -3, label: '大前天' }
+  if (/昨天|昨儿/.test(s)) return { offset: -1, label: '昨天' }
+  if (/前天/.test(s)) return { offset: -2, label: '前天' }
+  const m = s.match(/(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})/)
+  if (m) {
+    const ts = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
+    if (Number.isFinite(ts)) {
+      const today0 = new Date(); today0.setHours(0, 0, 0, 0)
+      const off = Math.round((ts - today0.getTime()) / 86400000)
+      if (off <= -1 && off >= -30) return { offset: off, label: `${Number(m[2])}月${Number(m[3])}日` }
+    }
+  }
+  return { offset: 0, label: '' }
 }
 
 // 加冰箱食材：数量非正数/非数字退回 1，存放区/分类非法退回默认
